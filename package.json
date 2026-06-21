@@ -1,0 +1,29 @@
+{
+  "name": "sealbox",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc",
+    "lint": "echo 'No linting configured'",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.0.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^7.1.2",
+    "@aws-sdk/client-s3": "^3.1073.0",
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2"
+  }
+}

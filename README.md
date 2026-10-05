@@ -1,58 +1,95 @@
-<div align="center">
+# sealbox
 
-# Project Name
+A TypeScript / Node 22 CLI that "seals" a file to Shelby (shelbynet) as an immutable blob. Anyone can later prove the file is byte-identical to what was sealed, and when.
 
-**A concise, high-signal tagline describing what this does.**
+**v0.2.0** — Live Early-Access Ready
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)](#)
+## Features
+- **Seal**: SHA-256 hash, upload to Shelby S3 gateway, and sign with Ed25519.
+- **Verify**: Re-fetch, re-hash, and verify cryptographic signatures.
+- **List**: View all sealed files in a local manifest.
+- **Doctor**: Preflight environment checks to validate live setup.
+- **JSON Output**: Scripting-friendly `--json` flag on all commands.
+- **Hardened**: Exponential backoff on S3/network errors, atomic manifest writes.
 
-</div>
+## Live Walkthrough
 
----
-
-## 📌 Overview
-
-A 2-3 sentence description of the problem this solves and how it solves it. Keep it technical and precise. No marketing fluff.
-
-## ✨ Key Features
-
-- **Feature 1:** Detailed explanation of the technical implementation.
-- **Feature 2:** How it handles edge cases or specific security concerns.
-- **Feature 3:** Performance or integration benefits.
-
-## 🏗️ Architecture / Security Note
-
-Briefly describe the architecture or security considerations. For example, if this interacts with smart contracts, mention the audit status or known risks. If it's an API, mention authentication mechanisms.
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js >= 18
-- (Other dependencies)
-
-### Installation
-
+### 1. Setup Environment
+Clone the repository and install dependencies:
 ```bash
-git clone https://github.com/Rishidar-lab/project-name.git
-cd project-name
+git clone https://github.com/Rishidar-lab/sealbox.git
+cd sealbox
 npm install
+npm run build
+npm link
 ```
 
-### Usage
-
+### 2. Configure Credentials
+Copy `.env.example` to `.env` and fill in the values:
 ```bash
-# Example command
-npm run start
+cp .env.example .env
+```
+- **SHELBY_API_KEY**: Get a free key at [geomi.dev](https://geomi.dev) to avoid anonymous rate limits.
+- **SIGNER_PRIVATE_KEY**: Your Ed25519 private key hex. **Do not use your main wallet!** Use a dedicated throwaway key.
+
+### 3. Fund Account
+Visit the [Shelby Faucet](https://faucet.shelbynet.shelby.xyz) and fund your address with both **APT** (for gas) and **ShelbyUSD** (for storage).
+
+### 4. Run Preflight Check
+Validate your setup before attempting a live seal:
+```bash
+sealbox doctor
+```
+Expected output:
+```text
+sealbox doctor — preflight checklist
+──────────────────────────────────────────────────
+  ✓  SHELBY_S3_ENDPOINT           https://api.shelbynet.shelby.xyz/shelby
+  ✓  SHELBY_API_KEY               (set — value hidden)
+  ✓  SIGNER_PRIVATE_KEY           (set — value hidden)
+  ✓  SHELBY_NETWORK               shelbynet
+  ✓  S3 endpoint reachable        https://api.shelbynet.shelby.xyz/shelby
+  ✓  APT balance > 0              0.1000 APT
+  ✓  ShelbyUSD balance > 0        1.0000 ShelbyUSD
+──────────────────────────────────────────────────
+
+READY — all checks passed. You can run sealbox seal.
 ```
 
-## 🛡️ Contributing & Security
+### 5. Seal a File
+```bash
+echo "Hello Shelby" > my-file.txt
+sealbox seal my-file.txt
+```
+Expected output:
+```text
+Sealing my-file.txt (13 bytes)...
 
-Found a vulnerability? Please reach out via [Bugcrowd](https://bugcrowd.com) or email directly. For general contributions, open an issue first to discuss proposed changes.
+✓ Sealed successfully
+  Seal ID:      a591a6d40bf42040
+  SHA-256:      a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+  Signer:       0x123...
+  Explorer URL: https://explorer.shelby.xyz/shelbynet/blob/sealbox%2Fa591a6d40bf42040...
+```
 
-## 📄 License
+### 6. Verify the Seal
+```bash
+sealbox verify a591a6d40bf42040
+```
+Expected output:
+```text
+Verifying a591a6d40bf42040...
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+PASS ✓
+  SHA-256:   a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+  Sealed at: 2026-06-21T10:00:00.000Z
+  Signer:    0x123...
+  Sig check: ok
+  Explorer:  https://explorer.shelby.xyz/shelbynet/blob/sealbox%2Fa591a6d40bf42040...
+```
 
----
-*Built by [@parzival](https://github.com/Rishidar-lab) - Security Researcher & Builder*
+## Security
+See [SECURITY.md](SECURITY.md) for critical warnings about private key handling.
+
+## License
+MIT

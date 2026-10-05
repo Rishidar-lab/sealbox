@@ -2,21 +2,94 @@ name: CI
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main, "feat/**" ]
   pull_request:
-    branches: [ master, main ]
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      run_live:
+        description: 'Run live integration test (requires secrets)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
-  build:
+  # ── Mocked unit-test job (always runs) ──────────────────────────────────────
+  test:
+    name: Install / Build / Lint / Test
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Use Node.js 22
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22
-        cache: 'npm'
-    - run: npm ci
-    - run: npm run build
-    - run: npm test
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (network mocked)
+        run: npm test
+
+  # ── Optional live-integration job ───────────────────────────────────────────
+  # Runs ONLY on manual workflow_dispatch AND only when the required secrets exist.
+  # SECURITY: use a DEDICATED throwaway test key — NEVER your main funded wallet.
+  # See SECURITY.md for details.
+  live-integration:
+    name: Live Integration (manual only)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.run_live == 'true'
+    environment: live-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run sealbox doctor (preflight)
+        env:
+          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
+          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
+          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
+          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
+        run: node dist/index.js doctor
+
+      - name: Seal a test file
+        env:
+          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
+          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
+          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
+          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
+        run: |
+          echo "sealbox live test $(date -u)" > /tmp/live-test.txt
+          node dist/index.js seal /tmp/live-test.txt --json
+
+      - name: Verify the sealed file
+        env:
+          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
+          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
+          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
+          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
+        run: |
+          SEAL_ID=$(node dist/index.js list --json | jq -r '.[-1].sealId')
+          node dist/index.js verify "$SEAL_ID" --json

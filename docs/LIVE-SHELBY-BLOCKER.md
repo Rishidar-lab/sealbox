@@ -211,23 +211,34 @@ leave the Aptos and indexer calls unauthenticated.
 ## 6. The single continuation command
 
 ```bash
-# 1. the Shelby API key (the only missing input) — see §5.1
+# 1. the Shelby API key — the only missing input. `read -s` keeps it out of
+#    the shell history and off the terminal.
 read -s SHELBY_GW_API_KEY
 export SHELBY_GW_API_KEY
 
-# 2. the local S3 gateway's own signing secrets (operator-chosen, local)
+# 2. the round trip: starts the official S3 gateway in a throwaway
+#    workspace, runs the harness, tears the gateway down
+./scripts/live-shelby.sh
+```
+
+`scripts/live-shelby.sh` fails closed with `SHELBY API KEY REQUIRED` (exit
+2) when the key is absent, generates the gateway's own local S3 signing
+secrets if they are not set, reads the Aptos key from
+`~/.shelby/config.yaml`, and then runs `npm run integration:shelby` against
+`http://localhost:9000`. It prints no secret and leaves no gateway running.
+
+For manual control, the equivalent explicit sequence is:
+
+```bash
 export SHELBY_GW_ACCESS_KEY_ID="sealbox-local-gateway"
 export SHELBY_GW_SECRET_ACCESS_KEY="$(head -c 40 /dev/urandom | base64 | tr -d '\n=+/' | head -c 40)"
-
-# 3. the Aptos key that signs the on-chain commitment
 export SHELBY_GW_APTOS_PRIVATE_KEY="$(python3 -c "import yaml;print(yaml.safe_load(open('$HOME/.shelby/config.yaml'))['accounts']['parzi']['private_key'])")"
 
-# 4. start the gateway (it reads the environment at start-up — a restart is
-#    required after the key is set)
-cd ~/shelby-gw
+mkdir -p ~/shelby-gw && cd ~/shelby-gw
+npm init -y >/dev/null && npm i @shelby-protocol/s3-gateway
+cp /path/to/sealbox/docs/shelby-gateway.config.example.js ./shelby.config.js
 node node_modules/@shelby-protocol/s3-gateway/bin/entry.js --config ./shelby.config.js &
 
-# 5. the round trip
 cd /path/to/sealbox
 SHELBY_S3_ENDPOINT="http://localhost:9000" \
 SHELBY_S3_REGION="shelbyland" \

@@ -69,7 +69,10 @@ npx @shelby-protocol/s3-gateway --config <config>
 
 A secret-free example configuration that reads every credential from the
 environment is provided at
-[`docs/shelby-gateway.config.example.js`](shelby-gateway.config.example.js).
+[`docs/shelby-gateway.config.example.js`](shelby-gateway.config.example.js),
+and a one-command launcher that starts the gateway in a throwaway
+workspace, runs the harness against it and tears it down again is at
+[`scripts/live-shelby.sh`](../scripts/live-shelby.sh).
 
 ## 2. What the S3 gateway requires
 

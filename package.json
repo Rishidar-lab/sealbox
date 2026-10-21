@@ -1,18 +1,52 @@
 {
   "name": "sealbox",
-  "version": "0.2.0",
-  "main": "dist/index.js",
-  "scripts": {
-    "test": "jest",
-    "build": "tsc",
-    "lint": "eslint .",
-    "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+  "version": "0.3.0",
+  "description": "Seal files to Shelby with an Ed25519-signed, independently verifiable manifest.",
+  "license": "MIT",
+  "author": "Rishidar-lab",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rishidar-lab/sealbox.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "bugs": {
+    "url": "https://github.com/Rishidar-lab/sealbox/issues"
+  },
+  "homepage": "https://github.com/Rishidar-lab/sealbox#readme",
+  "keywords": [
+    "shelby",
+    "ed25519",
+    "signature",
+    "integrity",
+    "provenance",
+    "sha256",
+    "s3",
+    "aptos",
+    "cli",
+    "timestamping"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "sealbox": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest",
+    "start": "node dist/index.js"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/jest": "^30.0.0",

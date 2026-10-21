@@ -48,7 +48,12 @@ export SHELBY_GW_ACCESS_KEY_ID="<local S3 access key id — your choice>"
 export SHELBY_GW_SECRET_ACCESS_KEY="<local S3 secret — your choice>"
 export SHELBY_GW_APTOS_PRIVATE_KEY="$(python3 -c "import yaml;print(yaml.safe_load(open('$HOME/.shelby/config.yaml'))['accounts']['parzi']['private_key'])")"
 export SHELBY_GW_API_KEY="<YOUR_SHELBY_API_KEY>"
-npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js &
+# the config imports @shelby-protocol/s3-gateway, so it must sit next to
+# the installed package
+mkdir -p ~/shelby-gw && cd ~/shelby-gw
+npm init -y >/dev/null && npm i @shelby-protocol/s3-gateway
+cp /path/to/sealbox/docs/shelby-gateway.config.example.js ./shelby.config.js
+node node_modules/@shelby-protocol/s3-gateway/bin/entry.js --config ./shelby.config.js &
 
 # 3. optionally fund the account with ShelbyUSD (the registrations were
 #    free, but a paid read may need a channel):

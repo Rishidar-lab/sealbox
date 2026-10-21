@@ -48,19 +48,39 @@ Please read this before relying on a `PASS`:
 - **It does not prove the artifact was truthful.** Sealbox proves that the
   bytes you get back are the bytes that were signed. It says nothing about
   whether those bytes were true when they were sealed.
-- **It does not prove the signer was legally who they claimed.** The signer
-  address is derived from the key. Whether that key belongs to a particular
-  person or organisation is outside Sealbox's scope.
-- **`sealedAt` is a signer-attested timestamp, not a trusted timestamp.** It
-  is the time the signing machine believed it was. It is covered by the
-  signature — "the signer attested to this timestamp value" — but no
-  independent authority proved the artifact existed at that instant. Use an
-  external trusted-timestamping service if you need that.
-- **It does not promise permanent storage.** Sealbox writes to Shelby's
+- **It does not prove the legal identity of the human or operator behind the
+  key.** The signer address is derived from the public key. That is a
+  cryptographic consistency check, not an identity claim: it says nothing
+  about who holds the key, whether they were authorised to sign, or whether
+  the key is the one you think it is.
+- **`sealedAt` is a signer-attested timestamp, not an independently trusted
+  timestamp.** It is the time the signing machine believed it was. It is
+  covered by the signature — "the signer attested to this timestamp value" —
+  but no independent authority proved the artifact existed at that instant.
+  Use an external trusted-timestamping service if you need that.
+- **It does not prove that the contents of a signed manifest are true.** A
+  signed record faithfully carries what the signer put in it. Whether the
+  statements inside are accurate is a different question.
+- **It does not prove permanence of storage.** Sealbox writes to Shelby's
   object store. Shelby's product is described as providing *immutable blobs*;
   that is **the storage provider's model, not a guarantee Sealbox can make**.
   Availability, retention and the provider's operational integrity are outside
   this tool's control.
+- **It does not prove continuous Shelby availability**, nor that the Shelby
+  network, gateway or account remains reachable or solvent.
+- **It is not third-party notarization.** Nothing in Sealbox involves an
+  independent notary, timestamping authority or attestation service. The only
+  parties are you and the key you control.
+- **It does not prove the artifact is safe to run.** Sealbox checks bytes and
+  signatures. It performs no malware scanning, no content inspection and no
+  safety analysis of any kind.
+- **It does not settle copyright or ownership questions.** A signature
+  attests that a key signed a record. It says nothing about who owns the
+  content, whether the signer had the right to sign it, or whether the
+  content infringes anything.
+- **It does not prove provenance that predates the seal.** Sealbox can only
+  attest to a record from the moment it was signed. It cannot show that the
+  artifact existed, or who created it, before that point.
 - **It has not been externally audited.** The cryptography is implemented on
   top of `@aptos-labs/ts-sdk` and `@noble/curves` and is exercised by the
   project's own adversarial test suite, but no third party has reviewed it.
@@ -225,10 +245,35 @@ with sealbox v0.3.0 or later.
 ## Storage
 
 Uploads and downloads use the Shelby S3 gateway with bounded exponential
-backoff. Only transient failures are retried; authentication errors (401/403),
+backoff and a bounded per-request timeout. Only transient failures are
+retried; authentication errors (401), authorization errors (403),
 insufficient funds (402) and rate limiting (429) are surfaced immediately and
-never retried automatically. Uploads are a `PUT` of a fixed key with a fixed
-body, so a retry cannot create a second object or a different body.
+never retried automatically. Uploads are a `PUT` of a fixed, content-addressed
+key with a fixed body, so a retry cannot create a second object or a
+different body.
+
+The gateway contract — endpoint, SigV4 region, bucket resolution, signing
+credentials — is recorded with the evidence used to establish it in
+[docs/SHELBY-INTEGRATION.md](docs/SHELBY-INTEGRATION.md). The bucket is
+resolved from the signing account's address so that `seal` and `verify`
+address the same object and verification never needs the private key.
+
+### Live integration status
+
+**Not yet verified against the live network.** A reusable harness is
+included:
+
+```bash
+npm run integration:shelby
+```
+
+It performs a real round trip — disposable fixture, local SHA-256, seal
+with a real Ed25519 signature, upload, download over the network, hash
+comparison, SealBox verification, and a local tamper check — and exits
+non-zero unless every stage succeeds. The current blocker (issued S3
+signing credentials and ShelbyUSD funding) and the exact continuation
+command are recorded in
+[docs/LIVE-SHELBY-BLOCKER.md](docs/LIVE-SHELBY-BLOCKER.md).
 
 The local manifest is written atomically: a temporary file in the same
 directory is `fsync`ed and then `rename`d over the target, so a reader sees
@@ -244,6 +289,7 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
 npm test             # jest
 npm run build        # tsc
+npm run integration:shelby   # opt-in live round trip (needs credentials)
 ```
 
 The test suite runs the real Ed25519 implementation locally — the

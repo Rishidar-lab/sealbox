@@ -9,7 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A security-hardening and correctness release. It is not a response to a
 reported exploitation of sealbox; it is the result of an internal review of
-the v0.2.0 verification path.
+the v0.2.0 verification path, followed by a review of the Shelby storage
+integration against the official Shelby documentation.
+
+### Storage integration (contract conformance)
+
+The v0.2.0 storage adapter was written against assumptions that the official
+Shelby documentation does not support. Each point below was confirmed by
+probing the live endpoints; see `docs/SHELBY-INTEGRATION.md`.
+
+* **SigV4 signing region.** The Shelby S3 gateway signs with the region
+  configured as its `server.region`, default `shelbyland`. v0.2.0 hard-coded
+  `us-east-1`, which produces a signature the gateway rejects. The region is
+  now `SHELBY_S3_REGION`, defaulting to `shelbyland`.
+* **Bucket resolution.** A bucket must resolve to the Aptos account that
+  owns the objects; the gateway supports legacy address-style bucket names.
+  v0.2.0 hard-coded the literal `shelby`, which cannot resolve to any
+  account. The bucket is now `SHELBY_S3_BUCKET`, defaulting to the signing
+  account's address — the same address at seal time and the recorded
+  `signerAddress` at verify time, so verification never needs the private
+  key.
+* **S3 signing credentials.** The gateway's `accessKeyId` /
+  `secretAccessKey` are shared signing secrets, distinct from the Shelby
+  API key. They are now `SHELBY_S3_ACCESS_KEY_ID` and
+  `SHELBY_S3_SECRET_ACCESS_KEY`, falling back to `SHELBY_API_KEY`.
+* **Request timeout.** The AWS SDK has no default request timeout, so a hung
+  connection could block a seal or verify indefinitely. A bounded timeout
+  (`SHELBY_S3_TIMEOUT_MS`, default 30 s) now aborts the request and is
+  retried as a transient failure.
+* **HTTP 401 and 403 are now distinct** (`AUTHENTICATION`,
+  `AUTHORIZATION`) instead of being reported as a generic configuration
+  error, so a blocked deployment names the actual cause.
+* **The `{endpoint}/{bucket}/{key}` path shape was validated and left
+  unchanged.** A probe of `GET /shelby/shelby/<key>` with an S3
+  `Authorization` header returns the gateway's SigV4 error, proving an
+  S3-compatible gateway is served at exactly that path.
+
+### Fixed: `doctor` could never report a funded account
+
+The balance check queried
+`/accounts/{address}/resource/0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>`
+percent-encoded. The fullnode rejects that form with **HTTP 400**
+(`invalid struct tag`), so the check always reported "could not query" and
+`doctor` could never reach READY. It now queries
+`/accounts/{address}/balance/{coinType}`, which the node answers directly.
+`doctor` also distinguishes a confirmed zero balance from a balance it could
+not establish.
+
+### Live integration
+
+* Added `npm run integration:shelby`
+  (`src/integration/live-shelby-smoke.ts`): a reusable harness that performs
+  a real round trip — disposable fixture, local SHA-256, seal with a real
+  Ed25519 signature, upload, download over the network, hash comparison,
+  SealBox verification, and a local tamper check — with bounded retries, a
+  request timeout, explicit HTTP status classification and a non-zero exit
+  on any real failure. The remote object is never mutated to test tampering.
+* **No successful live Shelby write is claimed.** The hosted gateway
+  rejected the signing credentials with HTTP 401 and the account holds
+  0 ShelbyUSD. The blocker and the exact continuation command are recorded
+  in `docs/LIVE-SHELBY-BLOCKER.md`.
+
+### Provenance
+
+* `docs/PROVENANCE.md` records what the repository history proves about
+  authorship and copyright, and what it cannot prove.
+* `AUTHORSHIP.md` no longer claims sole authorship where the commit metadata
+  says otherwise. The `LICENSE` notice is unchanged — see
+  `docs/PROVENANCE.md` for why the copyright line was left alone.
 
 ### Security
 

@@ -260,8 +260,17 @@ address the same object and verification never needs the private key.
 
 ### Live integration status
 
-**Not yet verified against the live network.** A reusable harness is
-included:
+**The upload half is proven against the live network; the round trip is
+not yet complete.** Through the official self-hosted S3 gateway, a real
+Ed25519-signed artifact was uploaded to Shelby: HTTP 200 with an on-chain
+ETag, and the account's `sequence_number` advanced 0 → 4 with four
+objects in Shelby's blob indexer. The **retrieval** then fails with
+`HTTP 500`, because the bytes were stored without ClayCode erasure
+encoding — and the official SDK's own upload path reproduces that with
+neither SealBox nor the gateway in the loop, so it is upstream behaviour
+rather than a SealBox defect. The remaining variable is a Shelby API key.
+
+A reusable harness is included:
 
 ```bash
 npm run integration:shelby
@@ -270,9 +279,10 @@ npm run integration:shelby
 It performs a real round trip — disposable fixture, local SHA-256, seal
 with a real Ed25519 signature, upload, download over the network, hash
 comparison, SealBox verification, and a local tamper check — and exits
-non-zero unless every stage succeeds. The current blocker (issued S3
-signing credentials and ShelbyUSD funding) and the exact continuation
-command are recorded in
+non-zero unless every stage succeeds. A secret-free example configuration
+for the official gateway is at
+[docs/shelby-gateway.config.example.js](docs/shelby-gateway.config.example.js).
+The exact blocker and the single continuation command are recorded in
 [docs/LIVE-SHELBY-BLOCKER.md](docs/LIVE-SHELBY-BLOCKER.md).
 
 The local manifest is written atomically: a temporary file in the same

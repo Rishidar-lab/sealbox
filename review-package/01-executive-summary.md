@@ -55,16 +55,24 @@ Two further defects were found during the v0.3.0 work:
 | production audit | 0 vulnerabilities |
 | clean-checkout reproduction | PASS |
 | CI | green |
-| **live Shelby round trip** | **NOT VERIFIED — BLOCKED on credentials and funding** |
+| **live Shelby round trip** | **NOT VERIFIED — the upload against the real network is proven (HTTP 200 + on-chain ETag, `sequence_number` 0→4); the retrieval is blocked on a Shelby API key** |
 
 ## The one open item
 
-The live round trip could not be executed. The hosted Shelby S3 gateway
-rejected the signing credentials with **HTTP 401** (issued
-`accessKeyId`/`secretAccessKey` are required and none is configured on this
-host), and the account holds **0 ShelbyUSD**, so the on-chain commitment
-registration an upload performs cannot be paid for. The exact continuation
-command is one line:
+The live round trip is **half complete**. Through the official self-hosted
+S3 gateway, SealBox uploaded a real, Ed25519-signed artifact to the
+Shelby network: **HTTP 200 with an on-chain ETag**, and the account's
+`sequence_number` advanced 0 → 4 with four objects in Shelby's blob indexer.
+
+The **retrieval** then fails with `HTTP 500` from the RPC, because the
+bytes were stored without ClayCode erasure encoding — and the **official
+SDK's own upload path reproduces this with neither SealBox nor the gateway
+in the loop**, so it is an upstream behaviour, not a SealBox defect.
+
+The remaining variable is the **Shelby API key**: the SDK's canonical RPC
+host requires one for every request, and the authenticated write path is
+the only route not observed to store raw bytes. The continuation is one
+command:
 
 ```bash
 npm run integration:shelby

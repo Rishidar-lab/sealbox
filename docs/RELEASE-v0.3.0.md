@@ -161,32 +161,38 @@ are mocked.
 
 ## 4. Live Shelby evidence
 
-**None. The round trip is blocked.**
+**The upload half is proven. The round trip is not complete.**
 
 | item | value |
 |---|---|
 | network | `shelbynet` (Aptos L1, chain id 119) |
-| endpoint | `https://api.shelbynet.shelby.xyz/shelby` |
+| route | the official **self-hosted** S3 gateway (`@shelby-protocol/s3-gateway@1.12.1`) on `http://localhost:9000` |
 | public account | `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b` |
-| APT balance | 1.0000 APT |
+| APT balance | 1.0000 APT (unchanged — gas was sponsored) |
 | ShelbyUSD balance | **0** |
-| attempt | `npm run integration:shelby` → exit 1 |
-| result | `BLOCKED: AUTHENTICATION` — HTTP 401 from the real endpoint |
+| upload | ✅ **HTTP 200**, on-chain ETag, `sequence_number` 0 → **4**, four objects in Shelby's blob indexer |
+| retrieval | ❌ **HTTP 500 `Internal Server Error`** from the RPC |
+| attempt | `npm run integration:shelby` → exit 1, `BLOCKED: SERVER_ERROR` |
 
-Two independent blockers: the hosted S3 gateway needs issued
-`accessKeyId`/`secretAccessKey` (obtained with a Shelby API key from
-geomi.dev; none is configured on this host), and the account holds no
-ShelbyUSD, so the on-chain commitment registration an upload performs
-cannot be paid for. Full detail and the exact continuation command:
+The retrieval fails because the bytes were stored **without ClayCode
+erasure encoding** (`stored_size == plaintext_size`; a correctly written
+blob stores more, e.g. the Shelby team's own smoke blob stores 168 bytes
+for 40 plaintext and reads 200). The **official SDK's own upload path,
+with neither SealBox nor the gateway in the loop, reproduces this
+exactly**, so it is upstream behaviour of the anonymous API tier rather
+than a SealBox or gateway defect. The remaining variable is a Shelby API
+key: the SDK's canonical RPC host requires one for every request, and the
+authenticated write path is the only route not observed to store raw
+bytes. Full detail, and the single continuation command:
 [LIVE-SHELBY-BLOCKER.md](LIVE-SHELBY-BLOCKER.md).
 
-What *was* established against the live endpoints (read-only probes, all
-quoted with their HTTP results): the S3 gateway is served at the
-`{endpoint}/{bucket}/{key}` path (a SigV4 error is returned there), the
-blob RPC is served at `{rpcEndpoint}/v1/blobs/{account}/{blob}`, the RPC
-requires a bearer API key for writes, and the fullnode's
-`/accounts/{address}/balance/{coinType}` form works while the generic
-`/resource/…CoinStore<…>` form returns HTTP 400. See
+Also established against the live endpoints (all quoted with their HTTP
+results): the S3 gateway is served at the `{endpoint}/{bucket}/{key}` path
+(a SigV4 error is returned there), the blob RPC is served at
+`{rpcEndpoint}/v1/blobs/{account}/{blob}`, the `api.` front door rejects
+a *bogus* bearer key with 401 while serving anonymous requests, and the
+fullnode's `/accounts/{address}/balance/{coinType}` form works while the
+generic `/resource/…CoinStore<…>` form returns HTTP 400. See
 [SHELBY-INTEGRATION.md](SHELBY-INTEGRATION.md).
 
 ---

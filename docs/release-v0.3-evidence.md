@@ -265,3 +265,94 @@ mutated. No verification logic was weakened.
 | `npm audit --omit=dev` | PASS — 0 vulnerabilities |
 | `npm run integration:shelby` (no credentials) | exit 2 — `BLOCKED: MISSING_CONFIGURATION` |
 | `npm run integration:shelby` (local identity, real endpoint) | exit 1 — `BLOCKED: AUTHENTICATION`, HTTP 401 |
+
+---
+
+## E8 — Live interoperability attempt (2026-10-21, second pass)
+
+Recorded: 2026-10-21 (Asia/Kolkata), SealBox `main` at
+`58e4e6914e2f47eae9f5c42f3f8c2d364f792935` (v0.3.0).
+
+**Outcome: the WRITE succeeded against the real network; the READ failed.
+No complete round trip. No success is claimed.**
+
+### What was set up
+
+* The **official self-hosted S3 gateway**
+  (`@shelby-protocol/s3-gateway@1.12.1`), started with
+  `npx @shelby-protocol/s3-gateway --config <config>` on
+  `http://localhost:9000`, `region: shelbyland`,
+  `locationHint: shelbynet-1`, `buckets: [<account address>]` (legacy
+  address-style), and an Aptos signer so write operations are enabled.
+* The configuration was **secret-free**: every credential came from the
+  environment, and the Aptos key was read from `~/.shelby/config.yaml` at
+  start-up. No key material was written to any file in the repository. A
+  reusable, secret-free example is now at
+  `docs/shelby-gateway.config.example.js`.
+
+### Observed
+
+| stage | result |
+|---|---|
+| fixture | 63 bytes, `sha256=c070d0733ba8ac8f…` |
+| seal (canonical payload + real Ed25519) | ✅ `sealId=c070d0733ba8ac8f` |
+| upload through the gateway | ✅ **HTTP 200**, on-chain ETag `0x4e77e466…` |
+| on-chain registration | ✅ account `sequence_number` 0 → **4**; four objects in the Shelby blob indexer with `blob_uid`, `location_name: shelbynet-1`, `plaintext_size`, `etag` |
+| retrieval from Shelby-backed storage | ❌ **HTTP 500 `Internal Server Error`** from the RPC |
+| hash comparison / signatureVerified / signerVerified / tamper reject | ⛔ never reached |
+
+### Why the read fails — the write lands unencoded
+
+| blob | plaintext | stored | readable |
+|---|---|---|---|
+| Shelby team's own smoke blob | 40 | **168** | ✅ 200 |
+| my 40-byte probe | 40 | **40** | ❌ 500 |
+| my 63-byte seal | 63 | **63** | ❌ 500 |
+| my 34-byte SDK-native probe (no SealBox, no gateway) | 34 | **34** | ❌ 500 |
+
+`stored == plaintext` ⇒ the bytes were stored **without ClayCode
+encoding**, and the RPC cannot serve a blob it has no encoded form for. The
+**SDK's own upload path, with neither SealBox nor the gateway in the loop,
+reproduces this exactly** — so it is upstream behaviour of the anonymous
+API tier, not a SealBox defect and not a gateway defect.
+
+### The corrected cause of the original 401
+
+The `api.shelbynet.shelby.xyz` front door **rejects any request carrying an
+`Authorization: Bearer <key>` it does not recognise** (401 `Unauthorized:
+API key not found`), while serving requests that carry **no** key. The
+earlier 401 was produced by sending a *placeholder* key. The S3
+`accessKeyId`/`secretAccessKey` are operator-chosen local secrets between
+the client and the operator's own gateway — never issued by Shelby, never
+validated by the hosted service.
+
+The SDK's canonical RPC host for shelbynet,
+`https://shelby.shelbynet.shelby.xyz/shelby`, requires a valid API key
+for **every** request, reads included.
+
+### Blockers
+
+1. **API key required** — the authenticated write path is the only route
+   not observed to store raw bytes. See
+   [LIVE-SHELBY-BLOCKER.md](LIVE-SHELBY-BLOCKER.md) §5–6 for the exact
+   fields and the single continuation command.
+2. **Funding — reported, not blocking.** Public address
+   `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b`,
+   network `shelbynet`, APT **1.0000 APT**, ShelbyUSD **0**. The four
+   registrations were free (the APT balance is unchanged — gas was
+   sponsored), so funding is not the cause of the failure. The official
+   tooling's minimum funding amount is `100000000` (100 ShelbyUSD at 6
+   decimals), as in the SDK's own `fundAccountWithShelbyUSD` example and
+   the maintainer's `shelby_daily.sh`.
+
+### What was not done
+
+* No private key, API key or signing secret printed, logged or committed.
+* No successful read, and none claimed.
+* The remote object was never mutated; the tamper check runs on a local
+  copy.
+* No verification logic weakened; no mocked storage used as evidence.
+* The faucet was not called — funding is a wallet-affecting action, and it
+  is not the cause of the failure.
+
+---

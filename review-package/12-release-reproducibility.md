@@ -1,0 +1,78 @@
+# 12 — Release reproducibility
+
+## Release identity
+
+| item | value |
+|---|---|
+| release | SealBox v0.3.0 |
+| code release SHA | `89f657705864f3cf2d055f5c1fac5ccea56651c9` (PR #2 merge) |
+| release document | PR #3 (`docs/RELEASE-v0.3.0.md`) |
+| release document | added by PR #3 (`docs/RELEASE-v0.3.0.md`) |
+| base | `07def30dd409011c649dfac541ce3952bba16d2f` (v0.2.0) |
+| tag | `v0.3.0` on `main` |
+| licence | MIT (`LICENSE`; provenance note in `docs/PROVENANCE.md`) |
+| live Shelby round trip | **NOT VERIFIED — BLOCKED** |
+
+## Reproduce the software gates
+
+```bash
+git clone https://github.com/Rishidar-lab/sealbox.git
+cd sealbox
+git checkout 89f657705864f3cf2d055f5c1fac5ccea56651c9
+npm ci
+npm run typecheck     # tsc --noEmit
+npm run lint          # eslint
+npm test              # 174 tests / 8 suites
+npm run build         # tsc
+npm audit --omit=dev  # 0 vulnerabilities
+node dist/index.js --version   # 0.3.0
+```
+
+Expected: every command exits 0, and `npm test` reports
+`Tests: 174 passed, 174 total`.
+
+This was executed from a **fresh clone** of `main` at the merge SHA, with
+no pre-existing `node_modules` or `dist`, and every gate passed.
+
+## Reproduce the live round trip (once the blocker is cleared)
+
+```bash
+# 1. a Shelby API key (human sign-up): https://geomi.dev
+# 2. a running S3 gateway (see docs/SHELBY-INTEGRATION.md):
+#      npx @shelby-protocol/s3-gateway --config shelby.config.yaml
+# 3. the account funded with ShelbyUSD (and APT):
+#      POST https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd
+#         {"address":"<account>","amount":100000000}
+# 4. the run:
+SHELBY_S3_ENDPOINT="http://localhost:9000" \
+SHELBY_S3_ACCESS_KEY_ID="<S3_ACCESS_KEY_ID>" \
+SHELBY_S3_SECRET_ACCESS_KEY="<S3_SECRET_ACCESS_KEY>" \
+SHELBY_API_KEY="<YOUR_API_KEY>" \
+SIGNER_PRIVATE_KEY="<YOUR_APTOS_PRIVATE_KEY>" \
+npm run integration:shelby
+```
+
+The harness prints a non-secret evidence record and exits 0 only when
+every stage succeeded; it exits 1 (BLOCKED) or 2 (MISSING_CONFIGURATION)
+otherwise.
+
+## Per-commit verification
+
+Every commit in the release range was checked out in isolation and passed
+`npm run typecheck`, `npm run lint`, `npm test` and `npm run build`.
+
+## CI
+
+`Typecheck / Lint / Test / Build` — green on the push run and the pull
+request run, on Node 22. The optional `Live Integration (manual only)`
+job stays manual-dispatch-only, is gated on the presence of the required
+secrets, and never blocks contributor CI.
+
+## Environment
+
+| item | value |
+|---|---|
+| OS | Ubuntu 24.04.5 LTS, Linux 7.0.0-38-generic x86_64 |
+| Node | v22.23.3 |
+| npm | 10.9.9 |
+| TypeScript | 6.0.3 (from `package-lock.json`) |

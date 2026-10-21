@@ -15,7 +15,9 @@
 | | |
 |---|---|
 | release | SealBox v0.3.0 |
-| release SHA (merge) | `89f657705864f3cf2d055f5c1fac5ccea56651c9` |
+| code release SHA (PR #2 merge) | `89f657705864f3cf2d055f5c1fac5ccea56651c9` |
+| release document | this file, added by PR #3 |
+| `v0.3.0` tag | on `main` (the commit that adds this document) |
 | branch merged | `fix/v0.3-cryptographic-verification` (PR #2) |
 | base | `07def30dd409011c649dfac541ce3952bba16d2f` (v0.2.0) |
 | released | 2026-10-21 |

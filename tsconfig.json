@@ -13,7 +13,15 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true
   },
-  "exclude": ["src/**/*.test.ts", "node_modules", "dist"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/__fixtures__/**",
+    "node_modules",
+    "dist"
+  ]
 }

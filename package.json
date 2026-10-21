@@ -1,28 +1,69 @@
 {
   "name": "sealbox",
-  "version": "0.2.0",
-  "main": "dist/index.js",
-  "scripts": {
-    "test": "jest",
-    "build": "tsc",
-    "lint": "echo 'No linting configured'",
-    "start": "node dist/index.js"
+  "version": "0.3.0",
+  "description": "Seal files to Shelby with an Ed25519-signed, independently verifiable manifest.",
+  "license": "MIT",
+  "author": "Rishidar-lab",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rishidar-lab/sealbox.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "bugs": {
+    "url": "https://github.com/Rishidar-lab/sealbox/issues"
+  },
+  "homepage": "https://github.com/Rishidar-lab/sealbox#readme",
+  "keywords": [
+    "shelby",
+    "ed25519",
+    "signature",
+    "integrity",
+    "provenance",
+    "sha256",
+    "s3",
+    "aptos",
+    "cli",
+    "timestamping"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "sealbox": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest",
+    "start": "node dist/index.js",
+    "integration:shelby": "ts-node src/integration/live-shelby-smoke.ts"
+  },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.0.0",
+    "eslint": "^9.39.1",
+    "globals": "^15.15.0",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.46.4"
   },
   "dependencies": {
     "@aptos-labs/ts-sdk": "^7.1.2",
     "@aws-sdk/client-s3": "^3.1073.0",
+    "@noble/curves": "2.2.0",
     "commander": "^15.0.0",
     "dotenv": "^17.4.2"
   }

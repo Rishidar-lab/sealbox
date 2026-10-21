@@ -389,6 +389,59 @@ describe('sealbox CLI — doctor', () => {
     expect(report.ready).toBe(false);
   });
 
+  test('doctor reports a positive balance it actually read', async () => {
+    const cli = harness();
+    const environment: Partial<CliEnvironment> = {
+      env: cli.env,
+      cwd: cli.dir,
+      stdout: (text) => cli.stdout.push(text),
+      stderr: (text) => cli.stderr.push(text),
+      makeStorage: () => ({ ping: async () => undefined } as unknown as ShelbyStorage),
+      // The fullnode's /balance/ endpoint returns a bare number.
+      fetchJson: async (url) =>
+        url.includes('AptosCoin')
+          ? { status: 200, body: 100000000 }
+          : { status: 200, body: 5000000 },
+    };
+    const code = await runCli(['node', 'sealbox', 'doctor', '--json'], environment);
+    // Every local and live check is satisfied in this harness, so doctor
+    // must report READY — this is the case v0.2.0 could never reach,
+    // because its balance query always failed with HTTP 400.
+    expect(code).toBe(0);
+    const report = JSON.parse(cli.stdout.join(''));
+    expect(report.ready).toBe(true);
+    const apt = report.liveChecks.find((c: { name: string }) => c.name === 'APT balance > 0');
+    const usd = report.liveChecks.find(
+      (c: { name: string }) => c.name === 'ShelbyUSD balance > 0',
+    );
+    expect(apt.state).toBe('pass');
+    expect(apt.note).toContain('1.0000 APT');
+    expect(usd.state).toBe('pass');
+    expect(usd.note).toContain('5.0000 ShelbyUSD');
+  });
+
+  test('the balance lookup uses the /balance/ endpoint, not /resource/', async () => {
+    const cli = harness();
+    const seen: string[] = [];
+    const environment: Partial<CliEnvironment> = {
+      env: cli.env,
+      cwd: cli.dir,
+      stdout: (text) => cli.stdout.push(text),
+      stderr: (text) => cli.stderr.push(text),
+      makeStorage: () => ({ ping: async () => undefined } as unknown as ShelbyStorage),
+      fetchJson: async (url) => {
+        seen.push(url);
+        return { status: 200, body: 100000000 };
+      },
+    };
+    await runCli(['node', 'sealbox', 'doctor', '--json'], environment);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const url of seen) {
+      expect(url).toContain('/balance/');
+      expect(url).not.toContain('/resource/');
+    }
+  });
+
   test('doctor reports a confirmed zero balance as a failure, not as unknown', async () => {
     const cli = harness();
     const environment: Partial<CliEnvironment> = {

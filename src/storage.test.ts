@@ -92,6 +92,16 @@ describe('ShelbyStorage — upload', () => {
     await expect(storage.upload('sealbox/abc', Buffer.from('x'))).rejects.toThrow(SealboxError);
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
+
+  test('an authentication failure is not retried', async () => {
+    mockSend.mockRejectedValue(httpError(401));
+    const storage = new ShelbyStorage(config);
+
+    await expect(storage.upload('sealbox/abc', Buffer.from('x'))).rejects.toMatchObject({
+      code: 'AUTHENTICATION',
+    });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ShelbyStorage — download', () => {
@@ -192,12 +202,21 @@ describe('ShelbyStorage — error mapping', () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
-  test('HTTP 401 is mapped to CONFIG', async () => {
+  test('HTTP 401 is mapped to AUTHENTICATION', async () => {
     mockSend.mockRejectedValue(httpError(401));
     const storage = new ShelbyStorage(config);
 
     await expect(storage.upload('k', Buffer.from('x'))).rejects.toMatchObject({
-      code: 'CONFIG',
+      code: 'AUTHENTICATION',
+    });
+  });
+
+  test('HTTP 403 is mapped to AUTHORIZATION', async () => {
+    mockSend.mockRejectedValue(httpError(403));
+    const storage = new ShelbyStorage(config);
+
+    await expect(storage.upload('k', Buffer.from('x'))).rejects.toMatchObject({
+      code: 'AUTHORIZATION',
     });
   });
 
@@ -212,6 +231,26 @@ describe('ShelbyStorage — error mapping', () => {
       expect(message).not.toContain(config.accessKeyId);
       expect(message).not.toContain(config.secretAccessKey);
     }
+  });
+});
+
+describe('ShelbyStorage — request timeout', () => {
+  test('a hung request is aborted by the timeout instead of blocking forever', async () => {
+    // A request that never settles.
+    mockSend.mockImplementation(() => new Promise(() => undefined));
+    const storage = new ShelbyStorage({ ...config, requestTimeoutMs: 60 });
+
+    const started = Date.now();
+    await expect(storage.upload('sealbox/abc', Buffer.from('x'))).rejects.toBeDefined();
+    const elapsed = Date.now() - started;
+    // Bounded: the abort fires and the retry loop gives up quickly.
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  test('the timeout is disabled when it is set to zero', async () => {
+    mockSend.mockResolvedValue({});
+    const storage = new ShelbyStorage({ ...config, requestTimeoutMs: 0 });
+    await expect(storage.upload('sealbox/abc', Buffer.from('x'))).resolves.toBeUndefined();
   });
 });
 

@@ -160,6 +160,22 @@ describe('verification — content integrity', () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe('TAMPERED');
   });
+
+  test('appended data is reported as TAMPERED', async () => {
+    const appended = Buffer.concat([ARTIFACT, Buffer.from('APPENDED')]);
+    const result = await verifyEntry({ entry: signedEntry(), retrieve: async () => appended });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('TAMPERED');
+    expect(result.integrityVerified).toBe(false);
+    expect(result.actualSha256).not.toBe(SHA256);
+  });
+
+  test('prepended data is reported as TAMPERED', async () => {
+    const prepended = Buffer.concat([Buffer.from('PREPENDED'), ARTIFACT]);
+    const result = await verifyEntry({ entry: signedEntry(), retrieve: async () => prepended });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('TAMPERED');
+  });
 });
 
 describe('verification — signature authenticity', () => {

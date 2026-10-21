@@ -16,6 +16,12 @@ export interface StorageConfig {
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+  /**
+   * Per-request timeout in milliseconds. `0` disables the timeout.
+   * The AWS SDK has no default request timeout, so without this a hung
+   * connection would block a `seal` or `verify` indefinitely.
+   */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -57,7 +63,12 @@ export function assertValidEndpoint(endpoint: string): string {
   return trimmed.replace(/\/+$/, '');
 }
 
+/** Default per-request timeout for storage operations. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 const RETRYABLE_CODES = new Set([
+  'AbortError',
+  'TimeoutError',
   'ECONNRESET',
   'ECONNREFUSED',
   'ENOTFOUND',
@@ -160,11 +171,20 @@ async function withRetry<T>(
       }
 
       // Authentication / authorization problems are permanent.
-      if (status === 401 || status === 403) {
+      if (status === 401) {
         throw new SealboxError(
-          'Storage endpoint rejected the supplied credentials (HTTP ' +
-            `${status}). Check SHELBY_API_KEY.`,
-          'CONFIG',
+          'Storage endpoint rejected the supplied credentials (HTTP 401). ' +
+            'The Shelby S3 gateway uses its own accessKeyId/secretAccessKey ' +
+            'for SigV4 signing; set SHELBY_S3_ACCESS_KEY_ID and ' +
+            'SHELBY_S3_SECRET_ACCESS_KEY.',
+          'AUTHENTICATION',
+        );
+      }
+      if (status === 403) {
+        throw new SealboxError(
+          'Storage endpoint denied the request (HTTP 403). The bucket must ' +
+            'resolve to the signing account address; set SHELBY_S3_BUCKET.',
+          'AUTHORIZATION',
         );
       }
 
@@ -181,9 +201,25 @@ async function withRetry<T>(
   throw lastErr;
 }
 
+/**
+ * The storage configuration actually in force, with the signing secret
+ * deliberately excluded. Exposed for diagnostics and for tests that pin the
+ * documented Shelby S3 gateway contract.
+ */
+export interface ResolvedStorageConfig {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  requestTimeoutMs: number;
+}
+
 export class ShelbyStorage {
   private client: S3Client;
   private bucket: string;
+  private requestTimeoutMs: number;
+
+  /** The configuration actually in force (never includes the secret). */
+  readonly resolved: ResolvedStorageConfig;
 
   constructor(config: StorageConfig) {
     const endpoint = assertValidEndpoint(config.endpoint);
@@ -202,8 +238,55 @@ export class ShelbyStorage {
         secretAccessKey: config.secretAccessKey,
       },
       forcePathStyle: true,
+      // Shelby's gateway does not support object versioning, ACLs or
+      // server-side encryption; asking for them is pointless.
+      maxAttempts: 1,
     });
     this.bucket = config.bucket;
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.resolved = {
+      endpoint,
+      region: config.region,
+      bucket: this.bucket,
+      requestTimeoutMs: this.requestTimeoutMs,
+    };
+  }
+
+  /**
+   * Send one command with a bounded timeout.
+   *
+   * The AWS SDK v3 has no default request timeout, so a hung connection
+   * would otherwise block forever. `send()` accepts an `abortSignal`, which
+   * is the SDK's supported cancellation mechanism.
+   */
+  private async withTimeout<T>(
+    fn: (abortSignal: AbortSignal | undefined) => Promise<T>,
+  ): Promise<T> {
+    if (this.requestTimeoutMs <= 0) {
+      return fn(undefined);
+    }
+    const controller = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        // Abort the request so the socket is released, and fail the call
+        // even if the transport ignores the abort signal.
+        controller.abort();
+        const err = new Error(
+          `Storage request timed out after ${this.requestTimeoutMs} ms.`,
+        );
+        err.name = 'TimeoutError';
+        reject(err);
+      }, this.requestTimeoutMs);
+    });
+    // The request may win the race; make sure a later timeout rejection is
+    // not reported as an unhandled rejection.
+    timeout.catch(() => undefined);
+    try {
+      return await Promise.race([fn(controller.signal), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -215,8 +298,11 @@ export class ShelbyStorage {
    */
   async upload(name: string, data: Buffer): Promise<void> {
     await withRetry(() =>
-      this.client.send(
-        new PutObjectCommand({ Bucket: this.bucket, Key: name, Body: data }),
+      this.withTimeout((signal) =>
+        this.client.send(
+          new PutObjectCommand({ Bucket: this.bucket, Key: name, Body: data }),
+          signal ? { abortSignal: signal } : undefined,
+        ),
       ),
     );
   }
@@ -233,8 +319,11 @@ export class ShelbyStorage {
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {
         const response = await withRetry(() =>
-          this.client.send(
-            new GetObjectCommand({ Bucket: this.bucket, Key: name }),
+          this.withTimeout((signal) =>
+            this.client.send(
+              new GetObjectCommand({ Bucket: this.bucket, Key: name }),
+              signal ? { abortSignal: signal } : undefined,
+            ),
           ),
         );
         return await readBody(response?.Body, name);
@@ -261,7 +350,13 @@ export class ShelbyStorage {
   /** Ping the S3 endpoint — used by `sealbox doctor`. */
   async ping(): Promise<void> {
     await withRetry(
-      () => this.client.send(new HeadBucketCommand({ Bucket: this.bucket })),
+      () =>
+        this.withTimeout((signal) =>
+          this.client.send(
+            new HeadBucketCommand({ Bucket: this.bucket }),
+            signal ? { abortSignal: signal } : undefined,
+          ),
+        ),
       2,
       200,
     );

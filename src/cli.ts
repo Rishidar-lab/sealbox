@@ -52,7 +52,15 @@ export interface CliEnvironment {
   now: () => Date;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
-  makeStorage: (env: NodeJS.ProcessEnv) => ShelbyStorage;
+  /**
+   * Build the storage client.
+   *
+   * @param signerAddress the Aptos account address the bucket must resolve
+   *   to. `seal` passes the signing key's address; `verify` passes the
+   *   address recorded in the manifest, so both address the same bucket
+   *   without verification ever needing the private key.
+   */
+  makeStorage: (env: NodeJS.ProcessEnv, signerAddress?: string) => ShelbyStorage;
   fetchJson: (url: string, timeoutMs: number) => Promise<{ status: number; body: unknown }>;
 }
 
@@ -98,13 +106,43 @@ function defaultEnvironment(): CliEnvironment {
     now: () => new Date(),
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
-    makeStorage: (env) => makeStorageFromEnv(env),
+    makeStorage: (env, signerAddress) => makeStorageFromEnv(env, signerAddress),
     fetchJson: defaultFetchJson,
   };
 }
 
-/** Build the storage client from configuration. */
-export function makeStorageFromEnv(env: NodeJS.ProcessEnv): ShelbyStorage {
+/**
+ * Default S3 signing region for the Shelby S3 gateway.
+ *
+ * The gateway's own `server.region` defaults to `shelbyland` and the region
+ * used to sign a request must match the gateway's, so `us-east-1` (which
+ * v0.2.0 hard-coded) would produce a signature the gateway rejects.
+ */
+export const DEFAULT_S3_REGION = 'shelbyland';
+
+/** Fallback bucket name when no account address is known. */
+export const FALLBACK_S3_BUCKET = 'shelby';
+
+/**
+ * Build the storage client from configuration.
+ *
+ * The Shelby S3 gateway is an S3-compatible proxy in front of the Shelby
+ * blob network. Its contract (see docs/SHELBY-INTEGRATION.md):
+ *
+ * * the S3 signing region must match the gateway's `server.region`,
+ *   default `shelbyland`;
+ * * the bucket must resolve to the Aptos account that owns the objects, so
+ *   the account address is used as the bucket name unless one is configured;
+ * * the S3 `accessKeyId` / `secretAccessKey` are shared signing secrets
+ *   between the client and the gateway, distinct from the Shelby API key.
+ *
+ * @param signerAddress the signer's Aptos address, used to resolve the
+ *   bucket when `SHELBY_S3_BUCKET` is not set.
+ */
+export function makeStorageFromEnv(
+  env: NodeJS.ProcessEnv,
+  signerAddress?: string,
+): ShelbyStorage {
   const endpoint = env.SHELBY_S3_ENDPOINT;
   if (!endpoint) {
     throw new SealboxError(
@@ -113,12 +151,30 @@ export function makeStorageFromEnv(env: NodeJS.ProcessEnv): ShelbyStorage {
     );
   }
   const apiKey = env.SHELBY_API_KEY;
+  const accessKeyId = env.SHELBY_S3_ACCESS_KEY_ID ?? apiKey ?? 'anonymous';
+  const secretAccessKey =
+    env.SHELBY_S3_SECRET_ACCESS_KEY ?? apiKey ?? 'anonymous';
+  const bucket =
+    env.SHELBY_S3_BUCKET ?? signerAddress ?? FALLBACK_S3_BUCKET;
+  const timeoutRaw = env.SHELBY_S3_TIMEOUT_MS;
+  const requestTimeoutMs =
+    timeoutRaw !== undefined && timeoutRaw.trim().length > 0
+      ? Number(timeoutRaw)
+      : undefined;
+  if (requestTimeoutMs !== undefined && !Number.isFinite(requestTimeoutMs)) {
+    throw new SealboxError(
+      `SHELBY_S3_TIMEOUT_MS is not a number: ${timeoutRaw}`,
+      'CONFIG',
+    );
+  }
+
   return new ShelbyStorage({
     endpoint,
-    region: 'us-east-1',
-    accessKeyId: apiKey ?? 'anonymous',
-    secretAccessKey: apiKey ?? 'anonymous',
-    bucket: 'shelby',
+    region: env.SHELBY_S3_REGION ?? DEFAULT_S3_REGION,
+    accessKeyId,
+    secretAccessKey,
+    bucket,
+    requestTimeoutMs,
   });
 }
 
@@ -298,6 +354,7 @@ export async function runCli(
 
         const signer = createSigner(privateKey);
         let signature: string;
+        let signerAddress: string;
         try {
           const payload = createSignedPayload({
             sha256,
@@ -308,13 +365,16 @@ export async function runCli(
             signerPublicKey: signer.signerPublicKey,
           });
           signature = signer.sign(payload);
+          signerAddress = signer.signerAddress;
         } finally {
           signer.dispose();
         }
 
         if (!json) stdout(`Sealing ${filePath} (${sizeBytes} bytes)...\n`);
 
-        const storage = environment.makeStorage(env);
+        // The bucket must resolve to the account that owns the object, so
+        // the signer's address is used unless SHELBY_S3_BUCKET overrides it.
+        const storage = environment.makeStorage(env, signerAddress);
         await storage.upload(blobName, fileBuffer);
 
         const entry: ManifestEntry = {
@@ -425,7 +485,10 @@ export async function runCli(
       if (!json) stdout(`Verifying ${sealId}...\n`);
 
       try {
-        const storage = environment.makeStorage(env);
+        // The bucket must be the same one the object was written to. It
+        // resolves from the recorded signer address, so verification never
+        // needs the private key.
+        const storage = environment.makeStorage(env, entry.signerAddress);
         const result = await verifyEntry({
           entry,
           retrieve: () => storage.download(entry.blobName),
@@ -533,19 +596,32 @@ function fullnodeFor(env: NodeJS.ProcessEnv, network: string): string | null {
   return DEFAULT_FULLNODES[network] ?? null;
 }
 
+/**
+ * Read a coin balance from an Aptos-style fullnode.
+ *
+ * The `/accounts/{address}/balance/{coinType}` endpoint is used because it
+ * accepts a bare coin type and returns the balance directly. The
+ * `/resource/{type}` form requires a fully qualified generic struct tag
+ * (for example `0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>`); the
+ * percent-encoded form of that tag is rejected with HTTP 400 by the node, so
+ * using it made the balance check permanently report "could not query".
+ *
+ * @param decimals display decimals for the coin (APT = 8, ShelbyUSD = 6).
+ */
 async function readCoinBalance(
   environment: CliEnvironment,
   fullnode: string,
   address: string,
   coinType: string,
+  decimals: number,
 ): Promise<{ state: CheckState; note: string }> {
-  const url = `${fullnode}/accounts/${address}/resource/${encodeURIComponent(coinType)}`;
+  const url = `${fullnode}/accounts/${address}/balance/${coinType}`;
   try {
     const { status, body } = await environment.fetchJson(url, 10000);
     if (status === 404) {
       return {
         state: 'fail',
-        note: 'Account or resource not found on the fullnode (balance is 0).',
+        note: 'Account not found on the fullnode (balance is 0).',
       };
     }
     if (status !== 200) {
@@ -554,9 +630,14 @@ async function readCoinBalance(
         note: `Fullnode returned HTTP ${status} — balance could not be established.`,
       };
     }
-    const value = Number(
-      (body as { data?: { coin?: { value?: unknown } } })?.data?.coin?.value ?? NaN,
-    );
+    // The endpoint returns a bare number; the object form is accepted too so
+    // that either shape can be consumed.
+    const raw =
+      typeof body === 'number'
+        ? body
+        : (body as { value?: unknown; data?: { coin?: { value?: unknown } } })?.data
+            ?.coin?.value ?? (body as { value?: unknown })?.value;
+    const value = Number(raw);
     if (!Number.isFinite(value)) {
       return {
         state: 'unknown',
@@ -566,7 +647,10 @@ async function readCoinBalance(
     if (value <= 0) {
       return { state: 'fail', note: 'Zero — fund at https://faucet.shelbynet.shelby.xyz' };
     }
-    return { state: 'pass', note: `${value} base units` };
+    return {
+      state: 'pass',
+      note: `${(value / 10 ** decimals).toFixed(4)} ${decimals === 8 ? 'APT' : 'ShelbyUSD'}`,
+    };
   } catch (err) {
     return {
       state: 'unknown',
@@ -691,7 +775,7 @@ export async function runDoctor(environment: CliEnvironment): Promise<DoctorRepo
     }
 
     if (address !== null) {
-      const apt = await readCoinBalance(environment, fullnode, address, APT_COIN_TYPE);
+      const apt = await readCoinBalance(environment, fullnode, address, APT_COIN_TYPE, 8);
       liveChecks.push({ name: 'APT balance > 0', state: apt.state, note: apt.note });
 
       const shelby = await readCoinBalance(
@@ -699,6 +783,7 @@ export async function runDoctor(environment: CliEnvironment): Promise<DoctorRepo
         fullnode,
         address,
         SHELBYUSD_COIN_TYPE,
+        6,
       );
       liveChecks.push({
         name: 'ShelbyUSD balance > 0',

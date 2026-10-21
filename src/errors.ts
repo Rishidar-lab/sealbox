@@ -18,6 +18,10 @@ export type SealboxErrorCode =
   | 'NETWORK'
   /** Local configuration problem (missing env var, bad path, ...). */
   | 'CONFIG'
+  /** The storage endpoint rejected the supplied credentials (HTTP 401). */
+  | 'AUTHENTICATION'
+  /** The storage endpoint refused the operation (HTTP 403). */
+  | 'AUTHORIZATION'
   /** The manifest file exists but cannot be parsed or violates its schema. */
   | 'MANIFEST_CORRUPT'
   /** A schema version that this build does not understand. */

@@ -1,147 +1,218 @@
 # Live Shelby Integration — Blocker
 
-**Status: BLOCKED — NOT EXECUTED AGAINST A LIVE WRITE.**
+**Status: BLOCKED — the round trip completes the WRITE and fails the READ.**
 
-No successful Shelby seal/upload/download/verify round trip has been
-performed. This document records exactly how far the attempt got, what the
-blocker is, and the one command that finishes it once the blocker is
-cleared.
+Superseded diagnosis: the earlier revision of this document blamed the
+hosted gateway for rejecting the S3 signing identity. That was **wrong** and
+is corrected below. The write path is now proven to work against the real
+Shelby network; the read path fails for a different, precisely identified
+reason.
 
-Recorded: 2026-10-21 (Asia/Kolkata), SealBox commit
-`cee5ac20bc0a37b633bf86250bbc5c675d70c51b` plus the integration fixes in
-this branch.
+Recorded: 2026-10-21 (Asia/Kolkata), SealBox `main` at
+`58e4e6914e2f47eae9f5c42f3f8c2d364f792935` (v0.3.0).
 
 ---
 
-## 1. The blocker
+## 1. What was proven, and what still fails
+
+| stage | result |
+|---|---|
+| fixture created (63 bytes) | ✅ |
+| sealed by the real SealBox v2 path (canonical payload + real Ed25519 signature) | ✅ |
+| **uploaded through the official Shelby S3 gateway** | ✅ **HTTP 200 + on-chain ETag** |
+| on-chain registration committed | ✅ `sequence_number` 0 → **4**; four objects indexed with blob_uids |
+| retrieved again from Shelby-backed storage | ❌ **HTTP 500 `Internal Server Error`** |
+| hash comparison / signatureVerified / signerVerified / tamper reject | ⛔ never reached |
+
+The harness output, verbatim (address truncated, no secret printed):
 
 ```
-BLOCKED: AUTHENTICATION
-  Storage endpoint rejected the supplied credentials (HTTP 401).
-  The Shelby S3 gateway uses its own accessKeyId/secretAccessKey for SigV4
-  signing; set SHELBY_S3_ACCESS_KEY_ID and SHELBY_S3_SECRET_ACCESS_KEY.
-  Next: Set SHELBY_S3_ACCESS_KEY_ID and SHELBY_S3_SECRET_ACCESS_KEY to the
-        signing secrets issued for the S3 gateway, then re-run:
-        npm run integration:shelby
+sealbox live Shelby smoke test
+  network        : shelbynet
+  endpoint host  : localhost:9000
+  endpoint path  : /
+  bucket         : 0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b
+  account        : 0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b
+  fixture        : 63 bytes, sha256=c070d0733ba8ac8f0d74c1e604f4aaa1422273e58ea221ab097da994fe06c915
+  sealed         : sealId=c070d0733ba8ac8f blob=sealbox/c070d0733ba8ac8f0d74c1e604f4aaa1422273e58ea221ab097da994fe06c915
+
+BLOCKED: SERVER_ERROR
+  Storage endpoint returned HTTP 500: Failed to retrieve blob content
 ```
 
-The harness reached the real endpoint, built a real request, and the
-endpoint rejected it. This is a real HTTP 401 from
-`api.shelbynet.shelby.xyz` — not a local failure, not a mock, and not a
-network error.
+---
 
-## 2. Public account and network
+## 2. The corrected root cause: the write lands unencoded
+
+The Shelby blob indexer records both the plaintext size and the *stored*
+size. A correctly written blob stores **more** than the plaintext, because
+the data is ClayCode erasure-encoded (`ClayCode_16Total_10Data_13Helper`).
+
+| blob | plaintext | stored | readable? |
+|---|---|---|---|
+| Shelby team's own smoke blob (`@0x4c8a…/smoke/hello2.txt`) | 40 | **168** | ✅ 200 |
+| my 40-byte probe | 40 | **40** | ❌ 500 |
+| my 63-byte seal | 63 | **63** | ❌ 500 |
+| my 32-byte probe | 32 | **32** | ❌ 500 |
+| my 34-byte SDK-native probe | 34 | **34** | ❌ 500 |
+
+`stored == plaintext` means the bytes were stored **raw, without ClayCode
+encoding**, and the RPC cannot serve a blob it has no encoded form for —
+hence `500 Internal Server Error` on every read (by name *and* by uid).
+
+**This is not a SealBox defect and not a gateway defect.** The official
+SDK's own upload path, with no SealBox and no S3 gateway in the loop, does
+the same thing:
+
+```
+$ node sdk-upload.mjs      # ShelbyNodeClient.upload(), no gateway
+  SDK upload -> returned: undefined
+  indexer:  plain=34  stored=34   <-- raw, exactly like the gateway path
+```
+
+The SDK sends **raw** blob slices to the RPC (`readInChunks(blobData,
+chunksetSize)` in `putBlobChunksets`); the RPC is expected to encode them
+server-side. On the anonymous tier it evidently does not.
+
+---
+
+## 3. Why the original 401 was not an S3-identity problem
+
+The hosted prefix `https://api.shelbynet.shelby.xyz/shelby` is a
+multi-tenant front door with two different behaviours depending on whether an
+`Authorization` header is present:
+
+| request | observed |
+|---|---|
+| no `Authorization` header | **routed** — 404 for unknown paths, 400 for a malformed SigV4 header, 200 for a readable blob |
+| `Authorization: Bearer <anything>` | **401 `Unauthorized: API key not found`** |
+| `Authorization: AWS4-HMAC-SHA256 …` (partial) | 400 `Missing x-amz-content-sha256 header required for SigV4` |
+| full SigV4 (AWS SDK) | 401 |
+
+So the original 401 was produced by **supplying a bearer key that does not
+exist** — supplying *no* key is strictly better than supplying a *wrong*
+one. The S3 access-key/secret-key pair in the S3 gateway is a **local
+client↔gateway** secret that I choose; it is never issued by Shelby and is
+never validated by the hosted service. That is why the local gateway accepts
+any value (the official defaults work) while the hosted prefix rejects
+unknown identities.
+
+The SDK's canonical RPC host for shelbynet is a **different host**,
+`https://shelby.shelbynet.shelby.xyz/shelby`, and that host requires a
+valid API key for *every* request:
+
+```
+GET .../v1/blobs_by_uid/{account}/{uid}
+  → 401 Unauthorized: Rejected because anonymous requests are not allowed,
+            you must provide a key, i.e. Authorization: Bearer <key>
+```
+
+**Conclusion: an API key is required to exercise Shelby's authenticated
+write path, which is the path that stores blobs correctly.**
+
+---
+
+## 4. Two hosts, two behaviours (measured)
+
+| host | role | anonymous read | anonymous write | needs API key |
+|---|---|---|---|---|
+| `api.shelbynet.shelby.xyz` | front door: fullnode `/v1`, faucet, blob RPC | ✅ 200 | ⚠️ accepted but stored **raw** | for a valid key |
+| `shelby.shelbynet.shelby.xyz` | the SDK's canonical RPC for shelbynet | ❌ 401 | ❌ 401 | ✅ always |
+| `api.shelbynet.aptoslabs.com` | the Shelby **blob indexer** (GraphQL) | ✅ 200 (metadata) | n/a | no |
+| `faucet.shelbynet.shelby.xyz` | the official faucet | n/a | n/a | no (optional `authToken`) |
+
+---
+
+## 5. What is required to finish
+
+### 5.1 API key — the blocker
+
+Obtain a Shelby API key: <https://geomi.dev> → *API Resource* → network
+**Shelbynet**. The key is issued for a server-side context. It is used in
+two places:
+
+| consumer | field | env var used by SealBox |
+|---|---|---|
+| local S3 gateway | `network.apiKey` | `SHELBY_GW_API_KEY` |
+| SealBox → S3 gateway (SigV4) | `credentials[].accessKeyId` / `secretAccessKey` | `SHELBY_S3_ACCESS_KEY_ID` / `SHELBY_S3_SECRET_ACCESS_KEY` |
+
+**Never paste the key into chat, a commit, or a log.** Put it in the
+environment of the two processes.
+
+### 5.2 Funding — reported, not blocking
 
 | item | value |
 |---|---|
+| public address | `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b` |
 | network | `shelbynet` (Aptos L1, chain id 119) |
-| S3 endpoint | `https://api.shelbynet.shelby.xyz/shelby` |
-| public account | `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b` |
-| bucket resolved by SealBox | the account address above (legacy address-style bucket) |
 | APT balance | `100000000` base units = **1.0000 APT** |
 | ShelbyUSD balance | **0** |
+| registration fee observed | **none charged** — the APT balance is unchanged across four registrations, so gas was sponsored |
+| minimum funding, per official tooling | `fundAccountWithShelbyUSD({ address, amount: 100000000 })` — the SDK's own example, and the same amount the maintainer's `shelby_daily.sh` requests (100 ShelbyUSD at 6 decimals) |
 
-The account address is public (it is the on-chain account). The signing key
-lives in `~/.shelby/config.yaml` and was never printed, logged or committed.
-
-## 3. Exact commands attempted
+Funding is **not** the cause of the observed failure — a read of *another
+account's* blob succeeds anonymously from the same host — but if reads turn
+out to be paid for once the write is authenticated, this is the command:
 
 ```bash
-# 1. the harness, with the local identity and the real endpoint
-export SHELBY_S3_ENDPOINT="https://api.shelbynet.shelby.xyz/shelby"
-export SHELBY_NETWORK="shelbynet"
-export SIGNER_PRIVATE_KEY="<from ~/.shelby/config.yaml — not reproduced here>"
-unset SHELBY_API_KEY
-npm run integration:shelby
-# → exit code 1, "BLOCKED: AUTHENTICATION", HTTP 401
-
-# 2. independent read-only probe of the same endpoint
-curl -s -o /dev/null -w '%{http_code}\n' -I \
-  "https://api.shelbynet.shelby.xyz/shelby/shelby/0x2a58c57c…"
-# → 401
+curl -s -X POST "https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd" \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b","amount":100000000}'
 ```
 
-## 4. Classification of the failures observed
+### 5.3 The local S3 gateway — prepared, safe
 
-| status | where | meaning |
-|---|---|---|
-| **401** | `PUT`/`HEAD` on the S3 path | the gateway does not recognise the SigV4 signing identity. The **issued** `accessKeyId`/`secretAccessKey` are required; the example values in the official documentation are for a **locally**-run gateway and are rejected by the hosted one. |
-| **401 `Unauthorized: API key not found`** | `PUT` on the RPC path | the Shelby blob RPC requires a bearer API key; a request with an `Authorization` header but an unknown key is rejected. |
-| **404 (route miss)** | `PUT` on the RPC path with no `Authorization` header | anonymous writes are not routed. |
-| **400 `Missing x-amz-content-sha256`** | S3 path with a partial `Authorization` header | confirms an S3 gateway is served at that path. |
-| **0 ShelbyUSD** | fullnode balance | the account cannot pay for the on-chain commitment registration that an upload performs. |
+The **supported** route is the self-hosted S3 gateway (all official
+integrations use `http://localhost:9000`). It is running, and it is
+configured **without any secret on disk**:
 
-## 5. There are two independent blockers
+* `docs/shelby-gateway.config.example.js` — a secret-free example config
+  that reads every credential from the environment.
+* The real Aptos key is read from `~/.shelby/config.yaml` at start-up and
+  passed in the environment; it is never written to a file in this
+  repository.
 
-1. **Credentials (primary).** The hosted S3 gateway needs an issued
-   `accessKeyId` / `secretAccessKey`, obtained with a Shelby API key
-   (<https://geomi.dev>). No such key exists on this host: there is no
-   `SHELBY_API_KEY` in the environment, no `apiKey` field in
-   `~/.shelby/config.yaml`, and no `.env` for this project. A Shelby API key
-   is obtained by a human sign-up and cannot be provisioned automatically.
-2. **Funding (secondary).** The account holds 0 ShelbyUSD. The official
-   faucet can grant it —
-   `POST https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd` with
-   `{"address":"<account>","amount":100000000}` — and the maintainer's own
-   `shelby_daily.sh` already calls it daily. This step was **not** performed
-   here, because funding is a wallet-affecting action reserved for the
-   maintainer.
+```bash
+npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js
+```
 
-## 6. Exact minimal human action required
+---
 
-1. Obtain a Shelby API key at <https://geomi.dev>.
-2. Run the official S3 gateway locally with that key and the local Aptos
-   key, per <https://docs.shelby.xyz/tools/s3-gateway>, for example:
+## 6. The single continuation command
 
-   ```yaml
-   # shelby.config.yaml
-   network:
-     name: shelbynet
-     rpcEndpoint: https://api.shelbynet.shelby.xyz/shelby
-     aptosFullnode: https://api.shelbynet.shelby.xyz/v1
-     aptosIndexer: https://api.shelbynet.shelby.xyz/v1/graphql
-     apiKey: <YOUR_API_KEY>
-   server:
-     port: 9000
-     region: shelbyland
-   credentials:
-     - accessKeyId: <S3_ACCESS_KEY_ID>
-       secretAccessKey: <S3_SECRET_ACCESS_KEY>
-       aptosPrivateKey: <YOUR_APTOS_PRIVATE_KEY>
-   buckets:
-     - "0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b"
-   ```
+```bash
+export SHELBY_GW_ACCESS_KEY_ID="<local S3 access key id — your choice>"
+export SHELBY_GW_SECRET_ACCESS_KEY="<local S3 secret — your choice>"
+export SHELBY_GW_APTOS_PRIVATE_KEY="$(python3 -c "import yaml;print(yaml.safe_load(open('$HOME/.shelby/config.yaml'))['accounts']['parzi']['private_key'])")"
+export SHELBY_GW_API_KEY="<your Shelby API key from geomi.dev>"
 
-   ```bash
-   npx @shelby-protocol/s3-gateway --config shelby.config.yaml
-   ```
+npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js &
 
-   *(Alternatively, point `SHELBY_S3_ENDPOINT` at the hosted gateway with
-   the signing secrets that deployment issues.)*
+SHELBY_S3_ENDPOINT="http://localhost:9000" \
+SHELBY_S3_REGION="shelbyland" \
+SHELBY_S3_ACCESS_KEY_ID="$SHELBY_GW_ACCESS_KEY_ID" \
+SHELBY_S3_SECRET_ACCESS_KEY="$SHELBY_GW_SECRET_ACCESS_KEY" \
+SHELBY_API_KEY="$SHELBY_GW_API_KEY" \
+SIGNER_PRIVATE_KEY="$SHELBY_GW_APTOS_PRIVATE_KEY" \
+npm run integration:shelby
+```
 
-3. Fund the account with ShelbyUSD (and confirm APT) via the official
-   faucet.
-4. Run the one command:
+The harness exits 0 only when every stage succeeds — fixture, seal,
+upload over the network, download over the network, hash equality,
+`signatureVerified: true`, signer identity match, and a local tamper
+rejection. It never reports "uploaded" as "verified".
 
-   ```bash
-   SHELBY_S3_ENDPOINT="http://localhost:9000" \
-   SHELBY_S3_ACCESS_KEY_ID="<S3_ACCESS_KEY_ID>" \
-   SHELBY_S3_SECRET_ACCESS_KEY="<S3_SECRET_ACCESS_KEY>" \
-   SHELBY_API_KEY="<YOUR_API_KEY>" \
-   SIGNER_PRIVATE_KEY="<YOUR_APTOS_PRIVATE_KEY>" \
-   npm run integration:shelby
-   ```
-
-The harness performs the whole sequence — disposable fixture, local
-SHA-256, seal with a real Ed25519 signature, upload, download over the
-network, hash comparison, SealBox verification, and a local tamper check —
-and exits non-zero unless every stage succeeds.
+---
 
 ## 7. What was NOT done
 
 * No private key, API key or signing secret was printed, logged or
-  committed.
-* No successful Shelby write is claimed.
+  committed. The local S3 secret was generated locally, stored only in a
+  `0600` file outside the repository, and is irrelevant to Shelby.
+* No successful Shelby read was performed, and none is claimed.
 * The remote object was never mutated to test tampering; the tamper check
-  runs against a local copy of the downloaded bytes.
-* No verification logic was weakened to make a network test pass.
+  runs against a local copy of the retrieved bytes.
+* No verification logic was weakened, and no mocked storage was used as
+  evidence of live interoperability.
+* The faucet was not called: funding is a wallet-affecting action reserved
+  for the maintainer, and it is not the cause of the failure.

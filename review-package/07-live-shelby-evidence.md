@@ -1,101 +1,135 @@
 # 07 — Live Shelby evidence
 
-## Result: NOT VERIFIED — BLOCKED
+## Result: NOT VERIFIED — the write succeeds, the read fails
 
-No successful live Shelby seal/upload/download/verify round trip has been
-performed. Nothing in this document claims otherwise.
+**No successful live Shelby seal → upload → retrieve → verify → tamper-reject
+cycle has been completed.** The upload half is proven against the real
+network; the retrieval half is not. Nothing here claims otherwise.
 
-Full detail: `docs/LIVE-SHELBY-BLOCKER.md`.
+Full account: `docs/LIVE-SHELBY-BLOCKER.md`. Raw session evidence:
+`docs/release-v0.3-evidence.md` §E8.
 
-## What the attempt produced
+---
 
-Command (from a clean checkout of `main`):
+## The route that was used
+
+The **official self-hosted S3 gateway** — the route every official
+integration uses (`http://localhost:9000`):
 
 ```bash
-SHELBY_S3_ENDPOINT="https://api.shelbynet.shelby.xyz/shelby" \
-SHELBY_NETWORK="shelbynet" \
-SIGNER_PRIVATE_KEY="<from ~/.shelby/config.yaml — never printed>" \
-npm run integration:shelby
+npx @shelby-protocol/s3-gateway --config <config>
 ```
 
-Output (address truncated; no secret appears anywhere):
+* `@shelby-protocol/s3-gateway@1.12.1`, `server.region: shelbyland`,
+  `locationHint: shelbynet-1`, `buckets: [<account address>]` (legacy
+  address-style), an Aptos signer so writes are enabled.
+* The configuration was **secret-free** — every credential came from the
+  environment; the Aptos key was read from `~/.shelby/config.yaml` at
+  start-up. A reusable, secret-free example is at
+  `docs/shelby-gateway.config.example.js`.
+* The gateway is a *client↔gateway* secret boundary: the S3
+  `accessKeyId`/`secretAccessKey` are operator-chosen, never issued by
+  Shelby.
 
-```
-sealbox live Shelby smoke test
-  network        : shelbynet
-  endpoint host  : api.shelbynet.shelby.xyz
-  endpoint path  : /shelby
-  bucket         : 0x2a58c57cf211474f902c67665b9708c0c1a621f0…
-  account        : 0x2a58c57cf211474f902c67665b9708c0c1a621f0…
-  fixture        : 63 bytes, sha256=12dd3faebbff267caeb3e8972ed6b02662193b6203694110b6f3ae0df3744a62
+## What was observed
 
-BLOCKED: AUTHENTICATION
-  Storage endpoint rejected the supplied credentials (HTTP 401). …
-  Next: Set SHELBY_S3_ACCESS_KEY_ID and SHELBY_S3_SECRET_ACCESS_KEY …
-```
-
-Exit code `1`. With no configuration at all the harness exits `2` with
-`BLOCKED: MISSING_CONFIGURATION`.
-
-## Read-only probes that did succeed
-
-These are the facts the integration fixes rest on. All against
-`api.shelbynet.shelby.xyz`, 2026-10-21.
-
-| probe | observed result |
+| stage | result |
 |---|---|
-| `GET /v1` | 200 — Aptos fullnode, chain id 119 |
-| `GET /shelby/shelby/probe` with an S3 `Authorization` header | **400 `Bad Request: Missing x-amz-content-sha256 header required for SigV4`** — an S3 gateway is served at `{endpoint}/{bucket}/{key}` |
-| `GET /shelby/shelby/probe` with no auth | 404 `text/plain` |
-| `GET /shelby/v1/blobs/{account}/probe` | 404 JSON `{"error":"Blob not found", …}` — the RPC path shape |
-| `PUT /shelby/v1/blobs/{account}/{blob}` with `Authorization: Bearer <not-a-key>` | **401 `Unauthorized: API key not found`** — the RPC requires a bearer API key for writes |
-| `PUT /shelby/v1/blobs/{account}/{blob}` with no `Authorization` | 404 — anonymous writes are not routed |
-| `GET /shelby/v1/blobs/{account}/{blob}` anonymous | 404 JSON — anonymous reads are served |
-| `GET /shelby/shelby/{bucket}` with SigV4, region `shelbyland`, documented example credentials | **401** |
-| `GET /v1/accounts/{addr}/balance/0x1::aptos_coin::AptosCoin` | 200 `100000000` (1 APT) |
-| `GET /v1/accounts/{addr}/balance/<ShelbyUSD type>` | 200 `0` |
-| `GET /v1/accounts/{addr}/resource/0x1%3A%3Acoin%3ACoinStore%3C…%3E` | **400 `invalid struct tag`** — the form v0.2.0's `doctor` used |
-| `GET /v1/accounts/{addr}/balance/0x1%3A%3Aaptos_coin%3A%3AAptosCoin` | 200 `100000000` — the `/balance/` form works encoded or literal |
+| fixture | 63 bytes, `sha256=c070d0733ba8ac8f…` |
+| seal — canonical payload, real Ed25519 | ✅ `sealId=c070d0733ba8ac8f` |
+| **upload through the gateway** | ✅ **HTTP 200**, on-chain ETag `0x4e77e466…` |
+| **on-chain registration** | ✅ account `sequence_number` 0 → **4**; four objects in the Shelby blob indexer with `blob_uid`, `location_name: shelbynet-1`, `plaintext_size`, `etag` |
+| **retrieve from Shelby-backed storage** | ❌ **HTTP 500 `Internal Server Error`** |
+| hash equality / `signatureVerified` / signer identity / tamper reject | ⛔ never reached |
 
-## Account state
+## Why the read fails: the write lands unencoded
+
+| blob | plaintext | stored | readable |
+|---|---|---|---|
+| Shelby team's own smoke blob (`@0x4c8a…/smoke/hello2.txt`) | 40 | **168** | ✅ 200 |
+| my 40-byte probe | 40 | **40** | ❌ 500 |
+| my 63-byte seal | 63 | **63** | ❌ 500 |
+| my 32-byte probe | 32 | **32** | ❌ 500 |
+| my 34-byte probe via the **SDK's own** upload (no SealBox, no gateway) | 34 | **34** | ❌ 500 |
+
+`stored == plaintext` means the bytes were stored **without ClayCode
+erasure encoding**; the RPC cannot serve a blob it has no encoded form for,
+so every read — by name *and* by uid — answers `500`.
+
+That last row matters most: the **official SDK's own upload path, with
+neither SealBox nor the S3 gateway in the loop, reproduces it exactly**. The
+defect is upstream of SealBox.
+
+## The corrected cause of the original 401
+
+The `api.shelbynet.shelby.xyz` front door **rejects any request that
+carries an `Authorization: Bearer <key>` it does not recognise** (401
+`Unauthorized: API key not found`) while serving requests that carry no key
+at all. The earlier 401 was therefore caused by sending a *placeholder* key —
+supplying no key is strictly better than supplying a wrong one.
+
+The SDK's canonical RPC host for shelbynet,
+`https://shelby.shelbynet.shelby.xyz/shelby`, requires a valid API key for
+**every** request:
+
+```
+GET .../v1/blobs_by_uid/{account}/{uid}
+  → 401 Unauthorized: Rejected because anonymous requests are not allowed,
+            you must provide a key, i.e. Authorization: Bearer <key>
+```
+
+## Two front doors, measured
+
+| host | anonymous read | anonymous write | API key |
+|---|---|---|---|
+| `api.shelbynet.shelby.xyz` | ✅ 200 | ⚠️ accepted, stored **unencoded** | for a valid key |
+| `shelby.shelbynet.shelby.xyz` | ❌ 401 | ❌ 401 | ✅ always |
+| `api.shelbynet.aptoslabs.com` (indexer) | ✅ 200 (metadata) | n/a | no |
+| `faucet.shelbynet.shelby.xyz` | n/a | n/a | optional |
+
+## Funding
 
 | item | value |
 |---|---|
+| public address | `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b` |
 | network | `shelbynet` (Aptos L1, chain id 119) |
-| endpoint | `https://api.shelbynet.shelby.xyz/shelby` |
-| public account | `0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b` |
-| APT | 1.0000 APT |
+| APT | `100000000` base units = **1.0000 APT** |
 | ShelbyUSD | **0** |
-| existing blobs | none — every probe returns `Blob not found` |
+| registration cost observed | **none** — the APT balance is unchanged across four registrations, so gas was sponsored |
+| minimum funding per official tooling | `100000000` (100 ShelbyUSD at 6 decimals) — the SDK's own `fundAccountWithShelbyUSD` example, and the same amount the maintainer's `shelby_daily.sh` requests |
 
-## The two independent blockers
+Funding is **not** the cause of the failure: another account's blob reads
+fine from the same host. It is reported because it is the remaining
+account-level prerequisite for a paid read, if one is required.
 
-1. **Credentials.** The hosted gateway rejects every signing identity
-   available here with HTTP 401. The gateway's `accessKeyId` /
-   `secretAccessKey` are issued alongside a Shelby API key
-   (<https://geomi.dev>); the values in the official documentation are for
-   a **locally**-run gateway and are rejected by the hosted one. No such
-   key exists on this host: not in the environment, not in
-   `~/.shelby/config.yaml` (which has no `apiKey` field), and there is no
-   `.env` for this project. Obtaining one requires a human sign-up.
-2. **Funding.** 0 ShelbyUSD. The on-chain commitment registration that an
-   upload performs charges ShelbyUSD. The official faucet can grant it
-   (`POST https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd`) and
-   the maintainer's own automation calls it daily — but that is a
-   wallet-affecting action reserved for the maintainer, so it was not
-   performed here.
+## The one command that finishes it
 
-## Also observed, independently of SealBox
+```bash
+export SHELBY_GW_ACCESS_KEY_ID="<local S3 access key id — your choice>"
+export SHELBY_GW_SECRET_ACCESS_KEY="<local S3 secret — your choice>"
+export SHELBY_GW_APTOS_PRIVATE_KEY="$(python3 -c "import yaml;print(yaml.safe_load(open('$HOME/.shelby/config.yaml'))['accounts']['parzi']['private_key'])")"
+export SHELBY_GW_API_KEY="<your Shelby API key from geomi.dev>"
 
-The maintainer's own `shelby_daily.log` shows the **official** Shelby CLI
-failing on every upload attempt on 2026-09-26 and 2026-09-28 with
-`Cannot convert @<address>/daily/… to a BigInt`. That is an upstream SDK
-failure, independent of SealBox, and it means the official tool path was
-already broken before this review.
+npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js &
+
+SHELBY_S3_ENDPOINT="http://localhost:9000" \
+SHELBY_S3_REGION="shelbyland" \
+SHELBY_S3_ACCESS_KEY_ID="$SHELBY_GW_ACCESS_KEY_ID" \
+SHELBY_S3_SECRET_ACCESS_KEY="$SHELBY_GW_SECRET_ACCESS_KEY" \
+SHELBY_API_KEY="$SHELBY_GW_API_KEY" \
+SIGNER_PRIVATE_KEY="$SHELBY_GW_APTOS_PRIVATE_KEY" \
+npm run integration:shelby
+```
+
+The harness exits 0 only when every stage succeeds.
 
 ## What was NOT done
 
 * No private key, API key or signing secret printed, logged or committed.
-* No successful live write claimed.
-* The remote object was never mutated; there was no object to mutate.
-* No verification logic weakened to make a network test pass.
+* No successful read performed, and none claimed.
+* The remote object was never mutated to test tampering — the tamper check
+  runs against a local copy of the retrieved bytes.
+* No verification logic weakened, and no mocked storage used as evidence of
+  live interoperability.
+* The faucet was not called; funding is a wallet-affecting action reserved
+  for the maintainer.

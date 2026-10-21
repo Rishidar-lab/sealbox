@@ -125,6 +125,21 @@ write path, which is the path that stores blobs correctly.**
 
 ## 5. What is required to finish
 
+### 5.0 The failure classified, on the canonical RPC host
+
+With the gateway pointed at the SDK's canonical host
+(`shelby.shelbynet.shelby.xyz`, the example config's default), the
+failure is unambiguous and comes from the SDK itself:
+
+```
+Failed to upload blob to RPC: Failed to get challenge: status 401,
+  body: Unauthorized: Rejected because anonymous requests are not allowed,
+  you must provide a key, i.e. Authorization: Bearer <key>, to use this upstream
+```
+
+Classification: **auth**. Not funding, not protocol, not endpoint, not the
+SDK, not SealBox. The only missing input is a valid Shelby API key.
+
 ### 5.1 API key — the blocker
 
 Obtain a Shelby API key: <https://geomi.dev> → *API Resource* → network
@@ -160,10 +175,10 @@ curl -s -X POST "https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd" \
   -d '{"address":"0x2a58c57cf211474f902c67665b9708c0c1a621f04f4d8c5608a378db5ecc400b","amount":100000000}'
 ```
 
-### 5.3 The local S3 gateway — prepared, safe
+### 5.3 The local S3 gateway — prepared, safe, and running
 
 The **supported** route is the self-hosted S3 gateway (all official
-integrations use `http://localhost:9000`). It is running, and it is
+integrations use `http://localhost:9000`). It has been started and is
 configured **without any secret on disk**:
 
 * `docs/shelby-gateway.config.example.js` — a secret-free example config
@@ -171,23 +186,49 @@ configured **without any secret on disk**:
 * The real Aptos key is read from `~/.shelby/config.yaml` at start-up and
   passed in the environment; it is never written to a file in this
   repository.
+* The config imports `@shelby-protocol/s3-gateway`, so it must sit in a
+  directory where that package is installed. Copy it next to the
+  installation:
 
 ```bash
-npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js
+mkdir -p ~/shelby-gw && cd ~/shelby-gw
+npm init -y >/dev/null && npm i @shelby-protocol/s3-gateway
+cp /path/to/sealbox/docs/shelby-gateway.config.example.js ./shelby.config.js
+node node_modules/@shelby-protocol/s3-gateway/bin/entry.js --config ./shelby.config.js
 ```
+
+**The key must be set at the top level of the `shelby` config object** —
+exactly where the YAML form `network.apiKey` maps to. The gateway spreads
+`config.shelby` into the SDK client configs, and the SDK then uses the
+top-level `apiKey` for all three consumers: the Aptos client
+(`clientConfig.API_KEY`, for transaction submission), the indexer client
+(`Authorization: Bearer`, for metadata) and the RPC client
+(`Authorization: Bearer`, for blob data). Setting only `rpc.apiKey` would
+leave the Aptos and indexer calls unauthenticated.
 
 ---
 
 ## 6. The single continuation command
 
 ```bash
-export SHELBY_GW_ACCESS_KEY_ID="<local S3 access key id — your choice>"
-export SHELBY_GW_SECRET_ACCESS_KEY="<local S3 secret — your choice>"
+# 1. the Shelby API key (the only missing input) — see §5.1
+read -s SHELBY_GW_API_KEY
+export SHELBY_GW_API_KEY
+
+# 2. the local S3 gateway's own signing secrets (operator-chosen, local)
+export SHELBY_GW_ACCESS_KEY_ID="sealbox-local-gateway"
+export SHELBY_GW_SECRET_ACCESS_KEY="$(head -c 40 /dev/urandom | base64 | tr -d '\n=+/' | head -c 40)"
+
+# 3. the Aptos key that signs the on-chain commitment
 export SHELBY_GW_APTOS_PRIVATE_KEY="$(python3 -c "import yaml;print(yaml.safe_load(open('$HOME/.shelby/config.yaml'))['accounts']['parzi']['private_key'])")"
-export SHELBY_GW_API_KEY="<your Shelby API key from geomi.dev>"
 
-npx @shelby-protocol/s3-gateway --config docs/shelby-gateway.config.example.js &
+# 4. start the gateway (it reads the environment at start-up — a restart is
+#    required after the key is set)
+cd ~/shelby-gw
+node node_modules/@shelby-protocol/s3-gateway/bin/entry.js --config ./shelby.config.js &
 
+# 5. the round trip
+cd /path/to/sealbox
 SHELBY_S3_ENDPOINT="http://localhost:9000" \
 SHELBY_S3_REGION="shelbyland" \
 SHELBY_S3_ACCESS_KEY_ID="$SHELBY_GW_ACCESS_KEY_ID" \

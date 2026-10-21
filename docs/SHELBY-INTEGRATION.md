@@ -218,6 +218,15 @@ Gateway-side variables (see
 `SHELBY_GW_RPC_ENDPOINT`, `SHELBY_GW_BUCKET_ALIAS`, `SHELBY_GW_PORT`,
 `SHELBY_GW_LOCATION_HINT`.
 
+`SHELBY_GW_API_KEY` must reach the **top level** of the gateway's `shelby`
+config object — the same slot the YAML form `network.apiKey` maps to. The
+gateway spreads `config.shelby` into the SDK client configs and the SDK
+then uses the top-level `apiKey` for the Aptos client
+(`clientConfig.API_KEY`), the indexer client and the RPC client. Setting
+only `rpc.apiKey` would leave the Aptos and indexer calls unauthenticated.
+The gateway reads its configuration **at start-up**, so it must be
+restarted after the variable is set.
+
 `seal` and `verify` resolve the bucket from the **same** address — the
 signing key's address at seal time, the recorded `signerAddress` at verify
 time — so verification never needs the private key and both address the

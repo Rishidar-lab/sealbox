@@ -62,13 +62,24 @@ const privateKey = new Ed25519PrivateKey(required('SHELBY_GW_APTOS_PRIVATE_KEY')
 const signer = Account.fromPrivateKey({ privateKey });
 const accountAddress = signer.accountAddress.toString();
 
+// The Shelby API key must be set at the TOP LEVEL of the `shelby` config
+// object, exactly as the YAML form `network.apiKey` maps to it. The gateway
+// spreads `config.shelby` into the SDK client configs, and the SDK then
+// uses the top-level `apiKey` for all three consumers:
+//   * the Aptos client   -> clientConfig.API_KEY  (transaction submission)
+//   * the indexer client -> Authorization: Bearer   (metadata queries)
+//   * the RPC client     -> Authorization: Bearer   (blob data)
+// Setting only `rpc.apiKey` would leave the Aptos and indexer calls
+// unauthenticated.
+const apiKey = process.env.SHELBY_GW_API_KEY;
+
 const rpc = {
   baseUrl:
     process.env.SHELBY_GW_RPC_ENDPOINT ||
     'https://shelby.shelbynet.shelby.xyz/shelby',
 };
-if (process.env.SHELBY_GW_API_KEY) {
-  rpc.apiKey = process.env.SHELBY_GW_API_KEY;
+if (apiKey) {
+  rpc.apiKey = apiKey;
 }
 
 const bucketResolver = new StaticBucketResolver({
@@ -79,6 +90,9 @@ export default defineConfig({
   shelby: {
     network: Network.SHELBYNET,
     rpc,
+    // Top-level: reaches the Aptos client, the indexer client and the RPC
+    // client. See the note above.
+    ...(apiKey ? { apiKey } : {}),
     locationHint: process.env.SHELBY_GW_LOCATION_HINT || 'shelbynet-1',
   },
   server: {

@@ -55,4 +55,12 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // The live-integration harness is a command-line tool: printing its
+    // progress and its evidence record is its entire purpose.
+    files: ['src/integration/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 );

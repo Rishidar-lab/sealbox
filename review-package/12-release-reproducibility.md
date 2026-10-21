@@ -60,7 +60,7 @@ node node_modules/@shelby-protocol/s3-gateway/bin/entry.js --config ./shelby.con
 #      POST https://faucet.shelbynet.shelby.xyz/fund?asset=shelbyusd
 #         {"address":"<account>","amount":100000000}
 
-# 4. the run:
+# 4. the run (or simply: ./scripts/live-shelby.sh)
 SHELBY_S3_ENDPOINT="http://localhost:9000" \
 SHELBY_S3_REGION="shelbyland" \
 SHELBY_S3_ACCESS_KEY_ID="$SHELBY_GW_ACCESS_KEY_ID" \

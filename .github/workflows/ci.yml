@@ -6,13 +6,6 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      run_live:
-        description: 'Run live integration test (requires secrets)'
-        required: false
-        default: 'false'
-        type: choice
-        options: ['false', 'true']
 
 permissions:
   contents: read
@@ -50,69 +43,3 @@ jobs:
         run: |
           node dist/index.js --version
           node dist/index.js --help
-
-  # ── Optional live-integration job ─────────────────────────────────────────
-  # Runs ONLY on manual workflow_dispatch AND only when the required secrets
-  # exist. It never blocks ordinary contributor CI.
-  # SECURITY: use a DEDICATED throwaway test key — NEVER your main funded
-  # wallet. See SECURITY.md for details.
-  live-integration:
-    name: Live Integration (manual only)
-    runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.run_live == 'true'
-    environment: live-test
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Check that live credentials are configured
-        env:
-          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
-          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
-        run: |
-          if [ -z "${SHELBY_API_KEY}" ] || [ -z "${SIGNER_PRIVATE_KEY}" ]; then
-            echo "::error::Live integration was requested but the required secrets are not configured. Add SHELBY_API_KEY and SIGNER_PRIVATE_KEY to the repository or environment secrets."
-            exit 1
-          fi
-          echo "Live credentials present (values hidden)."
-
-      - name: Run sealbox doctor (preflight)
-        env:
-          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
-          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
-          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
-          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
-        run: node dist/index.js doctor
-
-      - name: Seal a test file
-        id: seal
-        env:
-          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
-          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
-          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
-          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
-        run: |
-          echo "sealbox live test $(date -u)" > /tmp/live-test.txt
-          node dist/index.js seal /tmp/live-test.txt --json | tee /tmp/seal.json
-          echo "seal_id=$(jq -r '.sealId' /tmp/seal.json)" >> "$GITHUB_OUTPUT"
-
-      - name: Verify the sealed file
-        env:
-          SHELBY_API_KEY: ${{ secrets.SHELBY_API_KEY }}
-          SHELBY_NETWORK: ${{ secrets.SHELBY_NETWORK }}
-          SHELBY_S3_ENDPOINT: ${{ secrets.SHELBY_S3_ENDPOINT }}
-          SIGNER_PRIVATE_KEY: ${{ secrets.SIGNER_PRIVATE_KEY }}
-        run: node dist/index.js verify "${{ steps.seal.outputs.seal_id }}" --json

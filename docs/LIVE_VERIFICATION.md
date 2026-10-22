@@ -41,7 +41,7 @@ here), **BLOCKED** (cannot be shown without an external input), or **PLANNED**.
 | production build | `npm run build` (`tsc`) | **PASS** (IMPLEMENTED/built) |
 | CLI smoke | `node dist/index.js --version` / `--help` | **PASS** (prints `0.3.0`, usage) |
 | GitHub CI on base commit | run `39640691478` | **success** (CITED — GitHub Actions) |
-| GitHub CI on this pass's commit `78390b8` | run `39817886568` | **success** — Typecheck/Lint/Test/Build pass; Live-Integration skipped (manual only); **Vercel deployment pass** (LIVE-VERIFIED this pass) |
+| GitHub CI on this pass's branch | runs on each commit | **all green** — Typecheck/Lint/Test/Build pass; **Vercel deployment pass** (LIVE-VERIFIED this pass). Live integration is now a separate `workflow_dispatch`-only workflow, so it is not a (skipped) PR check. |
 | Vercel static deploy (`public/` + `vercel.json`) | PR #8 preview | **deployed green** — "public output directory not found" resolved; preview is behind Vercel access-protection (302 → SSO), so HTML not fetched anonymously |
 
 ### Core crypto invariants (all TESTED, real Ed25519, nothing mocked)

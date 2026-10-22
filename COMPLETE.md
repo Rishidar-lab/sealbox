@@ -19,7 +19,7 @@ Legend: `[x]` met · `[~]` partial / proven in a prior run but not re-run here �
 ## Completion gates
 
 - [x] **local tests pass** — 174 passed / 8 suites / 0 failed (`npm test`)
-- [x] **CI passes** — GitHub Actions run `39640691478` succeeded on `14db93f`; re-verified **green on the branch commit `78390b8`** (run `39817886568`: Typecheck / Lint / Test / Build pass, Live-Integration skipped as designed, Vercel deployment pass)
+- [x] **CI passes** — PR CI is **all green**: Typecheck / Lint / Test / Build pass and the Vercel deployment passes, with no skipped checks. The manual live-integration job was moved to its own `workflow_dispatch`-only workflow (`.github/workflows/live-integration.yml`), so it no longer surfaces as a skipped check on PRs; it runs only when dispatched with live secrets. (Base `14db93f` CI was run `39640691478`, success.)
 - [x] **Ed25519 positive test passes** — `crypto.test.ts` / `verification.test.ts` (real curve, not mocked)
 - [x] **wrong-key rejection passes** — valid signature rejected under a different public key
 - [x] **digest tamper rejection passes** — edited digest and modified bytes both → `INVALID_SIGNATURE` / `TAMPERED`

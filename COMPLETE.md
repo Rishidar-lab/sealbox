@@ -19,7 +19,7 @@ Legend: `[x]` met · `[~]` partial / proven in a prior run but not re-run here �
 ## Completion gates
 
 - [x] **local tests pass** — 174 passed / 8 suites / 0 failed (`npm test`)
-- [x] **CI passes** — GitHub Actions run `39640691478` succeeded on `14db93f`; this pass's changes are test-hygiene + docs + static assets and re-run green locally (typecheck, lint, test, build)
+- [x] **CI passes** — GitHub Actions run `39640691478` succeeded on `14db93f`; re-verified **green on the branch commit `78390b8`** (run `39817886568`: Typecheck / Lint / Test / Build pass, Live-Integration skipped as designed, Vercel deployment pass)
 - [x] **Ed25519 positive test passes** — `crypto.test.ts` / `verification.test.ts` (real curve, not mocked)
 - [x] **wrong-key rejection passes** — valid signature rejected under a different public key
 - [x] **digest tamper rejection passes** — edited digest and modified bytes both → `INVALID_SIGNATURE` / `TAMPERED`
@@ -29,7 +29,7 @@ Legend: `[x]` met · `[~]` partial / proven in a prior run but not re-run here �
 - [ ] **retrieved object verifies** — **BLOCKED**: never reached (retrieval failed first)
 - [~] **tampered object rejects** — tamper-rejection logic is TESTED (unit suite + the live harness's local-copy tamper check); a *live-retrieved* object was never reached because retrieval is blocked, and the remote object is never mutated by design
 - [x] **production build succeeds** — `npm run build` (`tsc`) clean; CLI `--version`/`--help` smoke OK
-- [x] **Vercel configuration matches actual output** — SealBox is a CLI, not a web app; `vercel.json` (`framework: null`, `buildCommand: null`, `outputDirectory: "public"`) serves a committed static `public/index.html` landing page, and both are excluded from the npm package. No fake empty `public/` was created. The actual Vercel deploy is owner-gated (team authorization) and not triggered here.
+- [x] **Vercel configuration matches actual output** — SealBox is a CLI, not a web app; `vercel.json` (`framework: null`, `buildCommand: null`, `outputDirectory: "public"`) serves a committed static `public/index.html` landing page, and both are excluded from the npm package. No fake empty `public/` was created. The **Vercel deployment check ran green on PR #8** (commit `78390b8`) — the "public output directory not found" error is resolved. The preview URL sits behind Vercel's deployment access-protection (anonymous requests 302-redirect to SSO), so the rendered HTML was not fetched anonymously; the green deployment check confirms the output directory was found and served.
 - [x] **README claims match evidence** — README already disclaims trusted timestamping, indefinite storage, and production Shelby; a "cryptographic validity vs. signer trust" section was added; the live-status section matches the evidence above
 
 ## Changes made this pass (smallest-fix principle)

@@ -41,6 +41,22 @@ derived from signed fields**:
 | `signatureScheme`    | must be `ed25519`                                |
 | `signedPayloadVersion` | must be `2`                                    |
 
+### Cryptographic validity vs. signer trust
+
+A `PASS` establishes two things and deliberately stops short of a third:
+
+- **(A) cryptographic validity** — the signature verifies over the canonical
+  signed record, and the signer address is the one derived from the stored
+  public key. This is what the test suite exercises.
+- **(B) signer trust** — *not* provided. Sealbox does not decide whether a
+  given key is one you should trust, and it has no built-in allow-list of
+  authorised signers. Deciding which signer is authoritative is the verifier's
+  responsibility: compare the reported `signerPublicKey` / `signerAddress`
+  against a key you already trust out of band.
+
+The two are kept separate on purpose — a valid signature from an unknown key
+is still a valid signature, not a trusted one.
+
 ## What Sealbox does **not** prove
 
 Please read this before relying on a `PASS`:

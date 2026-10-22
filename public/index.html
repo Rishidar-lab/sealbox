@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SealBox — Ed25519-signed, verifiable file manifests</title>
+    <meta
+      name="description"
+      content="SealBox is a TypeScript CLI that seals a file to Shelby and records a signed, independently verifiable manifest entry for it."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1a1a1a;
+        --muted: #5a5a5a;
+        --border: #e2e2e2;
+        --card: #f7f7f7;
+        --accent: #0b6b5b;
+        --code-bg: #f0f0f0;
+        --ok: #0b6b5b;
+        --warn: #8a5a00;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0e0f11;
+          --fg: #e8e8e8;
+          --muted: #9aa0a6;
+          --border: #272a2e;
+          --card: #16181b;
+          --accent: #4fd1c5;
+          --code-bg: #1a1d21;
+          --ok: #4fd1c5;
+          --warn: #e0a95f;
+        }
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+      }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px 72px; }
+      header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 8px; }
+      h1 { font-size: 2rem; margin: 0 0 6px; letter-spacing: -0.02em; }
+      .tag { color: var(--muted); font-size: 1.05rem; margin: 0; }
+      .badges { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+      .badge {
+        font-size: 0.8rem; padding: 3px 10px; border: 1px solid var(--border);
+        border-radius: 999px; color: var(--muted); background: var(--card);
+      }
+      h2 { font-size: 1.15rem; margin: 36px 0 12px; letter-spacing: -0.01em; }
+      p { margin: 0 0 14px; }
+      ul { margin: 0 0 14px; padding-left: 22px; }
+      li { margin: 6px 0; }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code, pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+      }
+      code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; }
+      pre {
+        background: var(--code-bg); border: 1px solid var(--border);
+        border-radius: 8px; padding: 16px; overflow-x: auto; line-height: 1.5;
+      }
+      pre code { background: none; padding: 0; }
+      .card {
+        background: var(--card); border: 1px solid var(--border);
+        border-radius: 10px; padding: 16px 18px; margin: 0 0 14px;
+      }
+      .status { font-weight: 600; }
+      .status.warn { color: var(--warn); }
+      .status.ok { color: var(--ok); }
+      footer {
+        margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border);
+        color: var(--muted); font-size: 0.85rem;
+      }
+      .note { color: var(--muted); font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <h1>SealBox</h1>
+        <p class="tag">
+          Seal a file to <a href="https://shelbynet.shelby.xyz">Shelby</a> and
+          record a signed, independently verifiable manifest entry for it.
+        </p>
+        <div class="badges">
+          <span class="badge">v0.3.0</span>
+          <span class="badge">TypeScript CLI</span>
+          <span class="badge">Ed25519</span>
+          <span class="badge">MIT</span>
+        </div>
+      </header>
+
+      <p class="note">
+        SealBox is a command-line tool, not a web app — this page only
+        describes it. Everything below is a claim the code backs up, or an
+        honestly-labelled limitation.
+      </p>
+
+      <h2>What a <code>PASS</code> proves</h2>
+      <p>When <code>sealbox verify &lt;sealId&gt;</code> prints <code>PASS</code>, the code has checked:</p>
+      <ul>
+        <li>
+          <strong>Content integrity</strong> — the bytes retrieved from storage
+          hash to the recorded SHA-256 and match the recorded size.
+        </li>
+        <li>
+          <strong>Signature authenticity</strong> — the recorded Ed25519
+          signature verifies cryptographically against the stored public key,
+          over a canonical, domain-separated signed record.
+        </li>
+        <li>
+          <strong>Signer consistency</strong> — the stored signer address is the
+          one derived from the stored public key.
+        </li>
+      </ul>
+
+      <h2>Cryptographic validity vs. signer trust</h2>
+      <p>
+        A <code>PASS</code> establishes <em>cryptographic validity</em> and
+        <em>signer consistency</em>. It does <strong>not</strong> establish
+        <em>signer trust</em>: SealBox does not decide whether a key is one you
+        should trust. Compare the reported public key and address against a key
+        you already trust out of band — that decision is the verifier's, by
+        design.
+      </p>
+
+      <h2>Install</h2>
+      <pre><code>git clone https://github.com/Rishidar-lab/sealbox.git
+cd sealbox
+npm ci
+npm run build
+npm link            # optional: puts `sealbox` on your PATH</code></pre>
+
+      <h2>Use</h2>
+      <pre><code>sealbox seal ./report.pdf     # hash, upload, sign, record
+sealbox verify &lt;sealId&gt;        # re-fetch, re-hash, verify signature + signer
+sealbox list                  # every record in the local manifest
+sealbox doctor                # preflight: local config and live network</code></pre>
+
+      <h2>Live Shelby status</h2>
+      <div class="card">
+        <p class="status warn">Upload proven on the live network · round trip not yet complete.</p>
+        <p style="margin-bottom: 0">
+          A real Ed25519-signed artifact was uploaded through the official
+          self-hosted S3 gateway (HTTP 200, on-chain registration). Retrieval
+          currently fails because the anonymous tier stores blobs un-encoded —
+          the official SDK reproduces this with no SealBox in the loop, so it is
+          upstream behaviour, not a SealBox defect. The remaining input is a
+          Shelby API key. See the repository's
+          <a href="https://github.com/Rishidar-lab/sealbox/blob/main/docs/LIVE-SHELBY-BLOCKER.md">blocker note</a>.
+        </p>
+      </div>
+
+      <h2>What SealBox does <em>not</em> prove</h2>
+      <p>
+        It makes no claim of trusted timestamping, indefinite storage,
+        third-party notarization, or anything about the truth, safety, legality
+        or ownership of the sealed bytes. The full list is in the
+        <a href="https://github.com/Rishidar-lab/sealbox#what-sealbox-does-not-prove">README</a>.
+        The cryptography has not been externally audited.
+      </p>
+
+      <footer>
+        <p>
+          <a href="https://github.com/Rishidar-lab/sealbox">Source on GitHub</a>
+          · MIT License · SealBox v0.3.0
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

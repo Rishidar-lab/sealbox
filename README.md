@@ -6,6 +6,19 @@ and records a signed, independently verifiable manifest entry for it.
 **v0.3.0** — Security-hardening release. Real Ed25519 verification, signed
 manifest schema v2, explicit verification statuses.
 
+## Status
+
+**ACTIVE** — maintained; completion verdict **PARTIAL** (see [COMPLETE.md](COMPLETE.md)).
+
+| Component | Tier |
+|---|---|
+| Ed25519 signing/verification, canonical manifest v2, tamper + wrong-key + malformed-signature rejection | **TESTED** (174 tests, CI green: typecheck / lint / test / build) |
+| Shelby upload via the official S3 gateway | **LIVE-VERIFIED** (prior documented run; HTTP 200, on-chain ETag) |
+| Shelby retrieval → digest verify → signature verify on a live-retrieved object | **BLOCKED** (anonymous-tier read-side failure reproduced by the official SDK; needs a Shelby API key — owner action) |
+| Trusted timestamping, indefinite storage guarantees | **NOT PROVIDED** (out of scope, stated below) |
+
+Full evidence: [docs/LIVE_VERIFICATION.md](docs/LIVE_VERIFICATION.md).
+
 ---
 
 ## What Sealbox proves

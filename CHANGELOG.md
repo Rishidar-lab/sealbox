@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Post-v0.3.0 housekeeping: evidence, claim hygiene, developer tooling and a
+project landing page. **No runtime or library behaviour changed** — the
+cryptography, the CLI and the manifest format are byte-for-byte as in 0.3.0,
+and the published npm package is unaffected (`public/` and `vercel.json` are
+excluded from it).
+
+### Added
+
+* `public/index.html` and `vercel.json` — a minimal, no-build static landing
+  page describing the CLI, and the matching Vercel configuration
+  (`framework`/`buildCommand` null, `outputDirectory: "public"`). This resolves
+  the historical "public output directory not found" deploy error without
+  creating a placeholder directory. Both are excluded from the npm package.
+* `docs/LIVE_VERIFICATION.md` and `COMPLETE.md` — a single tiered verification
+  record and a completion report (current verdict: `PARTIAL`, pending the live
+  Shelby round trip, which is blocked only on a Shelby API key).
+
+### Changed
+
+* **README** — added an explicit "cryptographic validity (A) vs. signer trust
+  (B)" section: a `PASS` proves authenticity and signer consistency, not that a
+  key is one you should trust. Deciding which signer is authoritative is the
+  verifier's out-of-band responsibility.
+* **CI** — the manual live-integration job moved from `ci.yml` to its own
+  `workflow_dispatch`-only workflow (`.github/workflows/live-integration.yml`),
+  so it no longer appears as a skipped check on every pull request. Its
+  behaviour is unchanged: it runs only when dispatched with live secrets and
+  fails closed without them.
+
+### Fixed
+
+* **`src/crypto.test.ts`** embedded raw control bytes (`\x00`, `\x01`) as
+  hostile test input, which made the whole file classify as binary `data`, so
+  `grep`/`ripgrep` and code-review tooling silently skipped it. The bytes are
+  now the byte-identical escapes `\u0000` / `\u0001`; the runtime test input is
+  unchanged (174/174 tests still pass) and the file is UTF-8 text again.
+
 ## [0.3.0] - 2026-10-21
 
 A security-hardening and correctness release. It is not a response to a

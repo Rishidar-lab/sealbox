@@ -329,8 +329,8 @@ describe('real Ed25519 sign and verify', () => {
     expect(() =>
       verifyEd25519Signature({
         payload,
-        signatureHex: ' ',
-        publicKeyHex: ' ',
+        signatureHex: '\u0000\u0001',
+        publicKeyHex: '\u0000',
       }),
     ).not.toThrow();
   });
